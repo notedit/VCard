@@ -185,18 +185,22 @@ CMD ["node", "/app/agent-server.js"]
 ### 5.4 Image Service（不走 agent · 不走 container）
 
 - **模型**：gpt-image-2，Workers 内直接 `openai` SDK 调
+- **实测延迟**（2026-05-04，AIHubMix 通路）：**单图 p50 ≈ 228s（gpt-image-2）**，gpt-image-1 ≈ 40s 作为对照
+- **架构硬约束**：Workers 单请求 30s CPU / 5min wall 上限——9 图同步在 Worker 内串行/并行都不可能。**Queue + GenJob DO fan-out 是必需路径，不是优化项**
 - **实体**：`GenJob`、`CardImage`
 - **流程（整组生成）**：
   1. `POST /projects/:id/gen-jobs` 创建 GenJob，写入 CF Queue（9 条消息）
   2. 立即返回 jobId（status=queued）
   3. 创建 GenJob DO 作为 fan-out 中心
-  4. Queue consumer Worker 处理消息（`max_concurrency: 3` 避限频）
+  4. Queue consumer Worker 处理消息（`max_concurrency: 3` 避限频）—— 3 并发 × 4min/图 × 9 图 ≈ **整组 12 分钟**
   5. 单图完成 → 上传 R2 → 写 `CardImage` → 通知 GenJob DO → DO push SSE `card_image_done`
   6. 9 图全成 → status=done；部分失败 → status=partial（保留成功）
   7. **不做 OCR 校验**：失败由用户在编辑器点"重新生成此卡"触发
+- **超时策略**：Queue consumer 单条消息 `timeout = 6min`（覆盖 gpt-image-2 p95），超时记 partial 失败，不重排队
 - **Prompt 拼接**：`[全局 prefix（主体锚点 + 锁定项）] + [Skill 风格 token] + [本卡角色 + 描述]`
 - **缓存键**：`hash(project_id, card_index, full_prompt)` → `image_url` 存 Workers KV
 - **单卡重生 / 蒙版**：单条 Queue 消息，复用流程
+- **可选分级**（M1 待评估）：`gpt-image-1`（40s，便宜）作为预览模式，`gpt-image-2`（4min，高质量）作为最终模式，让用户在编辑器选
 
 ### 5.5 Edit Proxy + Edit Agent（Container · ⌘K）
 
@@ -489,6 +493,8 @@ POST /changes/:id/undo
 | § 10 P0 Agent 建议采纳率 ≥ 30% | 埋点 + 周报 |
 | **新增** container 冷启 < 2s（CF Containers resume） | benchmark 脚本 |
 | **新增** Pi 流式事件跨 ws 0 丢字 | 阶段 0 spike 必过 |
+| **新增** 单图生成 p95 < 6min（gpt-image-2） | Queue consumer 实测打点；超时即记 partial |
+| **新增** 整组 9 图生成 p95 < 15min | GenJob DO 完成时间打点 |
 
 ---
 
@@ -568,3 +574,4 @@ VCard/
 | 日期 | 变更 | 来源 |
 |---|---|---|
 | 2026-05-03 | 初稿 | Issue #1 |
+| 2026-05-04 | § 5.4 加 gpt-image-2 实测延迟 228s/图 + 12min 整组 + 6min 超时；§ 9 增加单图/整组延迟验收线 | AIHubMix 实测 |

@@ -5,9 +5,10 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "skipLibCheck": true,
+    "types": ["node", "./worker-configuration.d.ts"],
     "paths": {
       "@vcard/shared-types": ["../../packages/shared-types/src/index.ts"]
     }
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "drizzle.config.ts", "vitest.config.ts"]
 }

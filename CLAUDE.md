@@ -19,6 +19,7 @@
 
 - `design/` 里的屏幕是 **wireframe 低保真草图**（手绘风），仅用于 wireframe 阶段。中保真 / 生产实现必须改为按 [Visual System](./design/docs/visual-system.md) 执行。
 - Voice & Tone 规则适用于**所有** AI 输出文案，不限于 UI。
+- **API key 统一从 `~/.secrets/common.env` 读取**（如 `AIHUBMIX_API_KEY`、`CF_AIG_TOKEN`、`OPENROUTER_API_KEY` 等）。运行脚本前用 `set -a && . ~/.secrets/common.env && set +a` 注入；**不要**把真值写进仓库内任何文件，包括 `.env.example` / `.dev.vars.example`（这些只放占位 key 名）。
 
 ## 工作流程
 

@@ -1,0 +1,11 @@
+{
+  "name": "@vcard/bench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cold-start": "node cold-start.mjs",
+    "test": "echo 'no tests' && exit 0",
+    "typecheck": "echo 'no typecheck' && exit 0"
+  }
+}

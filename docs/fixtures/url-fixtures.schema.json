@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "URL grab fixture entry",
+  "type": "object",
+  "required": ["id", "url", "platform", "expected"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^(xhs|wechat|zhihu)-\\d{3}$",
+      "description": "Stable id, e.g. xhs-001 / wechat-014 / zhihu-003"
+    },
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Public URL to fetch. Must be a permalink not a short link."
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["redbook", "wechat", "zhihu"]
+    },
+    "expected": {
+      "type": "object",
+      "required": ["body_min_chars", "image_min"],
+      "properties": {
+        "title_substr": {
+          "type": "string",
+          "description": "A substring expected to appear in the extracted title (case-insensitive). Optional."
+        },
+        "body_min_chars": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum body text length after extraction. Default 200 for zh."
+        },
+        "image_min": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum number of images extracted. RedBook is image-heavy so usually ≥3."
+        },
+        "tags_any": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Any of these tags should appear in extracted metadata. Optional."
+        }
+      }
+    },
+    "added_at": {
+      "type": "string",
+      "format": "date",
+      "description": "When this fixture was added. ISO date."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Quirks or reasons this URL is in the corpus (e.g., long-tail edge case, lots of emoji, paywall content)."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "deprecated", "broken"],
+      "description": "Drop fixtures that go 404 / paywall change. Mark deprecated, don't delete (audit trail)."
+    }
+  }
+}

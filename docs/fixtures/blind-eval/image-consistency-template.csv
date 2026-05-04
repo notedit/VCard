@@ -1,0 +1,3 @@
+set_id,reviewer,subject_consistency,style_consistency,layout_breakage,comments
+# Example row (delete before real use):
+# set_a3f9c1,r01,4,5,1,第 7 张人物背景突然变室内

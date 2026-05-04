@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "purpose": "Plan agent regression dataset. Run `POST /projects` + `/plan` for each topic; assert: (1) 9 cards generated, (2) cover/CTA roles present, (3) ≥1 suggestion proposed, (4) Voice & Tone gates pass.",
+  "platform": "redbook",
+  "card_count": 9,
+  "_categories": "餐饮 / 旅游 / 学习 / 职场 — 8 each, 32 total",
+  "topics": [
+    { "id": "food-001", "category": "餐饮", "topic": "周末 200 块在胡同吃到撑", "tone": "省钱攻略", "notes": "极强 RedBook 风格；测试 emoji + 价格点的覆盖" },
+    { "id": "food-002", "category": "餐饮", "topic": "帝都打工人午餐通勤 30 分钟内能吃到的便宜好吃的", "tone": "通勤/打工人", "notes": "测试场景关键词触发（地理 + 时间窗）" },
+    { "id": "food-003", "category": "餐饮", "topic": "一个人外食一周的真实开销", "tone": "真实记录", "notes": "测试数字罗列卡片是否出现" },
+    { "id": "food-004", "category": "餐饮", "topic": "上海 50 块以内的高分小馆子", "tone": "种草", "notes": "测试地理 + 价格双约束的 list 卡片质量" },
+    { "id": "food-005", "category": "餐饮", "topic": "手残党的电饭煲一锅香", "tone": "教程", "notes": "测试步骤型 list 卡片的角色识别" },
+    { "id": "food-006", "category": "餐饮", "topic": "30 元自制健身餐 vs 60 元外卖代餐", "tone": "对比向", "notes": "测试 vs 结构是否被识别为对比卡片" },
+    { "id": "food-007", "category": "餐饮", "topic": "凌晨两点还在营业的小店", "tone": "氛围向", "notes": "测试氛围/情绪类主题的 hook 力" },
+    { "id": "food-008", "category": "餐饮", "topic": "第一次吃米其林的怯怯笔记", "tone": "第一人称真实", "notes": "测试个人故事 → payoff 卡片闭环" },
+
+    { "id": "travel-001", "category": "旅游", "topic": "周末 city walk 三条小众路线", "tone": "攻略", "notes": "测试 list 主导结构（3 路线 → 3-4 卡片）" },
+    { "id": "travel-002", "category": "旅游", "topic": "京都赏樱躲开人潮的 5 个时间窗", "tone": "干货", "notes": "测试 5 个时间窗如何分配到 9 张卡" },
+    { "id": "travel-003", "category": "旅游", "topic": "第一次穷游搭子注意事项", "tone": "提醒类", "notes": "测试 cta + payoff 是否合理" },
+    { "id": "travel-004", "category": "旅游", "topic": "海岛三天能省一半的攻略", "tone": "省钱", "notes": "测试时间维度 + 财务维度的卡片切分" },
+    { "id": "travel-005", "category": "旅游", "topic": "单人 3000 块玩转大理", "tone": "实操预算", "notes": "测试预算细化卡片的精度" },
+    { "id": "travel-006", "category": "旅游", "topic": "川西自驾被忽略的小村", "tone": "小众", "notes": "测试低知名度地名是否会被弱化或 hallucinate" },
+    { "id": "travel-007", "category": "旅游", "topic": "雨天逃进去的城市美术馆", "tone": "氛围", "notes": "测试场景化主题的图像 prompt 一致性" },
+    { "id": "travel-008", "category": "旅游", "topic": "北京周边 2 小时高铁圈周末", "tone": "实用攻略", "notes": "测试地理范围的语义覆盖（多个目的地）" },
+
+    { "id": "study-001", "category": "学习", "topic": "上班党碎片时间学英语 21 天", "tone": "打卡向", "notes": "测试时间承诺类主题的 CTA" },
+    { "id": "study-002", "category": "学习", "topic": "自学一门编程语言路线图", "tone": "路线图", "notes": "测试线性步骤被识别为多张 argument 卡片" },
+    { "id": "study-003", "category": "学习", "topic": "被低估的免费学习网站合集", "tone": "收藏向", "notes": "测试 list 主导 + 单条简短描述" },
+    { "id": "study-004", "category": "学习", "topic": "手帐法治好我的拖延", "tone": "个人故事", "notes": "测试 hook 卡片的情绪强度" },
+    { "id": "study-005", "category": "学习", "topic": "备考雅思每天 4 小时怎么排", "tone": "时间表", "notes": "测试时间表如何拆分为 9 张卡（早/中/晚 × 多日？）" },
+    { "id": "study-006", "category": "学习", "topic": "用 ChatGPT 学习的 5 个真实场景", "tone": "工具向", "notes": "测试 5 个场景的卡片角色分配" },
+    { "id": "study-007", "category": "学习", "topic": "30 天读完 5 本书的清单分享", "tone": "清单", "notes": "测试书单类主题（5 本 → 9 卡如何组织）" },
+    { "id": "study-008", "category": "学习", "topic": "二战考研的心态调节", "tone": "情绪疗愈", "notes": "测试敏感话题的 Voice & Tone 是否过度鸡汤" },
+
+    { "id": "career-001", "category": "职场", "topic": "大厂裸辞自由职业第 90 天复盘", "tone": "复盘", "notes": "测试时间锚点（第 90 天）的开篇 hook" },
+    { "id": "career-002", "category": "职场", "topic": "给应届生写简历的 5 条避坑", "tone": "避坑", "notes": "测试避坑类主题的 list 紧凑度" },
+    { "id": "career-003", "category": "职场", "topic": "跨行转岗第一年踩的雷", "tone": "踩坑", "notes": "测试负面经验主题的转折结构" },
+    { "id": "career-004", "category": "职场", "topic": "远程办公一年后的真心话", "tone": "真实经验", "notes": "测试长时间跨度主题的卡片节奏" },
+    { "id": "career-005", "category": "职场", "topic": "当主管才发现的管理误区", "tone": "反思", "notes": "测试身份切换主题的 hook" },
+    { "id": "career-006", "category": "职场", "topic": "985 不卷选择二三线工作的真实体验", "tone": "对比/选择", "notes": "测试地域 + 学历双维度议题" },
+    { "id": "career-007", "category": "职场", "topic": "跟老板谈涨薪的 3 个时机", "tone": "技巧", "notes": "测试敏感商业话题的合规度" },
+    { "id": "career-008", "category": "职场", "topic": "开会摸鱼但被夸的工具栈", "tone": "工具向带反讽", "notes": "测试反讽语气是否被 Voice & Tone 守住" }
+  ]
+}

@@ -6,6 +6,10 @@
     "packages/*",
     "sandbox/*"
   ],
+  "engines": {
+    "node": ">=20",
+    "npm": ">=10"
+  },
   "scripts": {
     "typecheck": "npm run -ws typecheck",
     "test": "npm run -ws test"

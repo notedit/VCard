@@ -2,6 +2,7 @@
   "name": "vcard-m1",
   "private": true,
   "workspaces": [
+    "design",
     "apps/*",
     "packages/*",
     "sandbox/*"
@@ -11,6 +12,7 @@
     "npm": ">=10"
   },
   "scripts": {
+    "build": "npm run -ws --if-present build",
     "typecheck": "npm run -ws typecheck",
     "test": "npm run -ws test"
   }

@@ -67,4 +67,32 @@ describe('buildPlanInstructions — MVP-4 skill stacking', () => {
     const a = skill({ id: '1', name: 'X', systemPrompt: 'X' });
     expect(buildPlanInstructions([a])).toContain('正文 ≤ 80 字');
   });
+
+  it('always includes Voice & Tone rules (with or without skills)', () => {
+    expect(buildPlanInstructions([])).toContain('Voice & Tone');
+    const a = skill({ id: '1', name: 'X', systemPrompt: 'X' });
+    expect(buildPlanInstructions([a])).toContain('Voice & Tone');
+  });
+
+  it('injects skill fewShotExamples into the prompt', () => {
+    const a = skill({
+      id: '1',
+      name: 'Sample',
+      systemPrompt: 'PROMPT',
+      fewShotExamples: [
+        { input: 'topic A', output: 'output A' },
+        { input: 'topic B', output: 'output B' },
+      ],
+    });
+    const out = buildPlanInstructions([a]);
+    expect(out).toContain('Few-shot 示例');
+    expect(out).toContain('Input: topic A');
+    expect(out).toContain('Output: output A');
+    expect(out).toContain('Input: topic B');
+  });
+
+  it('omits Few-shot block when skill has empty fewShotExamples', () => {
+    const a = skill({ id: '1', name: 'Empty', systemPrompt: 'PROMPT', fewShotExamples: [] });
+    expect(buildPlanInstructions([a])).not.toContain('Few-shot 示例');
+  });
 });

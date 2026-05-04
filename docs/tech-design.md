@@ -254,28 +254,41 @@ CMD ["npm", "run", "start"]
 
 ### 5.5 Edit Agent（Workers · ToolLoopAgent · ⌘K）
 
-> M1 修订：Workers 内直接 ToolLoopAgent，不走容器池。形态与 §5.2 同。
+> MVP-3 已落地（`apps/api/src/agent/edit-agent.ts`）。Workers 内直接 ToolLoopAgent，不走容器池。
 
-- **模型**：Haiku 4.5（首字符 < 1.2s；通过 AIHubMix `/anthropic`）
-- **API**：`POST /cards/:id/edit` → AI SDK UI Stream
+- **模型**：Haiku 4.5（首字符 < 1.2s 目标；通过 AIHubMix `/anthropic`）
+- **API**：`POST /cards/:id/edit`，body `{ field: 'title'|'body', instruction: string }` → AI SDK UI Stream
+- **代码落点**：
+  - `apps/api/src/agent/edit-agent.ts`：`buildEditAgent({ model, card, contextCards, field })` 拼 instructions（含当前字段 + 当前值 + 邻近卡片 ±1）
+  - `apps/api/src/agent/tools/propose-edit.ts`：单一 tool；execute **不落库**，只返回 `{ field, newValue, rationale }` 通过 stream 的 tool-result 给前端
+  - `apps/api/src/app.ts`：endpoint 读 card + 邻居 → buildEditAgent → `createAgentUIStreamResponse`
 - **流程**：
-  1. 构造 ToolLoopAgent，instructions 包含 `currentField` / `currentValue` / `contextCards`，user message 是 instruction
-  2. 单一 tool：`propose_edit(field, newValue, rationale)` — execute 不落库，**只返回 diff**（execute return 值进 stream，前端从 stream 拿到 diff）
-  3. 用户 confirm → 客户端调 `PATCH /cards/:id`（version 乐观锁 + ChangeLog）；cancel 不动
+  1. 客户端 POST instruction
+  2. Worker 读 card + 邻居 ±1 作为 contextCards
+  3. ToolLoopAgent 单轮调用 propose_edit，stream 出 diff
+  4. 用户 confirm → 客户端调 `PATCH /cards/:id`（version 乐观锁 + ChangeLog + 触发 reflect Queue）；cancel 不动
 - 三种入口（自由 NLU / 一键候选 / 模板指令）共用同一 endpoint，前端拼好 instruction
+- **stopWhen**：`stepCountIs(3)`——单轮预期，防失控
 - ~~预热 container 池~~ ⚠️ 不需要：Workers 冷启就足够命中 < 1.2s
 
 ### 5.6 Suggestion Service（Workers · ToolLoopAgent · 异步）
 
-> M1 修订：reflect agent 跑在 Queue consumer Worker 内，不再借容器池。
+> MVP-5 已落地（`apps/api/src/agent/suggestion-agent.ts` + 队列分支 in `gen-image-consumer.ts`）。reflect agent 跑在 Queue consumer Worker 内，不再借容器池。
 
 - **模型**：Haiku 4.5（通过 AIHubMix `/anthropic`）
-- **触发**：编辑 / 重排 / 重生 后，Workers 推消息到 `suggestion-reflect` Queue；consumer Worker 收到消息后构造 ToolLoopAgent 跑一轮（无流式回客户端，直接写 Suggestion 表）
+- **触发**：编辑（`PATCH /cards/:cardId`）/ 重排（`PATCH /projects/:id/cards`）/ 重生（`POST /projects/:id/gen-jobs`）后，Workers 把 `{ projectId, cardId?, trigger }` send 到 `suggestion-reflect` Queue
+- **代码落点**：
+  - `apps/api/src/agent/suggestion-agent.ts`：`runSuggestionReflect(payload, deps)` — agent.generate 跑到完成，工具 execute 是唯一落地通道
+  - `apps/api/src/agent/tools/propose-suggestion.ts`：tool execute 直接 insert into suggestions
+  - `apps/api/src/agent/tools/read-context.ts`：read_project / read_card
+  - `apps/api/src/queues/gen-image-consumer.ts`：`handleQueueBatch` 的 suggestion-reflect 分支构造 deps + 调 runSuggestionReflect
+  - `apps/api/src/app.ts`：`triggerReflect(env, payload)` 在三个 mutation endpoint 末尾调用，best-effort（缺 binding 不抛错）
 - **类型**：`structure` / `platform_sop` / `quality`（Visual System 黄/蓝/紫）
 - **工具**：`read_project` / `read_card` / `propose_suggestion`
 - **实体**：`Suggestion { id, projectId, cardId?, type, message, actionLabel, actionPayload, status, createdAt }`
-- **降权**：忽略 N=3 次后该类静默；`(userId, suggestionType)` 维度记 `ignored_count`
-- **API**：`GET /projects/:id/suggestions`、`POST /suggestions/:id/accept`、`POST /suggestions/:id/ignore`
+- **静默策略**：agent instructions 显式说"如无显著问题不要 propose_suggestion"；让 LLM 自己拒绝。降权（用户忽略 N 次）延后到有 GET/accept/ignore 端点时实装
+- **stopWhen**：`stepCountIs(8)`（read_project + 可选 read_card + 至多 1 propose）
+- **API**（待实装）：`GET /projects/:id/suggestions`、`POST /suggestions/:id/accept`、`POST /suggestions/:id/ignore`
 
 ### 5.7 Export Service
 
@@ -546,6 +559,9 @@ POST /changes/:id/undo
 | **新增** 单图生成 p95 < 6min（gpt-image-2） | Queue consumer 实测打点；超时即记 partial |
 | **新增** 整组 9 图生成 p95 < 15min | GenJob DO 完成时间打点 |
 | **MVP-2** Image pipeline 正确性 | mocked 单测覆盖 producer + consumer 全路径（5 cases）；opt-in 1-image 真实 API 测试（`RUN_REAL_IMAGE_TEST=1`，约 $0.16/run） |
+| **MVP-3** Edit endpoint 不自动落库 | mocked Haiku 单测断言 propose_edit 不改 card row（version 不变） |
+| **MVP-4** Skill 叠加 prompt 优先级 | 5 个 mocked 单测覆盖：默认值、stages 过滤、maxWordsPerCard 优先级、空列表 |
+| **MVP-5** Suggestion reflect 写库 | mocked 单测：propose_suggestion → suggestions 表 row；agent 决定不提建议时不写入 |
 
 ---
 
@@ -630,3 +646,4 @@ VCard/
 | 2026-05-04 | § 5.4 加 gpt-image-2 实测延迟 228s/图 + 12min 整组 + 6min 超时；§ 9 增加单图/整组延迟验收线 | AIHubMix 实测 |
 | 2026-05-04 | **§ 0.1 架构修订**：放弃 CF Containers + Pi SDK，改用 Workers + Vercel AI SDK `ToolLoopAgent`；§3 架构图前置 deferred 横幅；§4 整段 deferred；§5.2/5.3/5.5/5.6 流程重写；§10 风险表汰换 6 行 | MVP-1 落地 + 风险评估 |
 | 2026-05-04 | **MVP-2 image pipeline**：§5.4 重写为 producer + consumer 实装；新增 §9 验收行（mocked + opt-in real-API 测试策略）；R2 key 约定 `card-images/{genJobId}/{cardId}-v{n}.png`；客户端轮询 `/gen-jobs/:id/status`，SSE 推送延后 | MVP-2 落地 |
+| 2026-05-04 | **MVP-3+4+5 三件套**：§5.5 Edit 实装（propose_edit 不落库）；§5.3 Skills 叠加 prompt 实装（buildPlanInstructions 拼接）；§5.6 Suggestion 异步 reflect 实装（reflect agent 在 suggestion-reflect Queue 分支运行）；§9 增加 3 行 MVP-3/4/5 验收 | MVP-3 + MVP-4 + MVP-5 落地 |

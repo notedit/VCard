@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { z } from 'zod';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { createAgentUIStreamResponse, type LanguageModel } from 'ai';
 import type { ChangeActor, ChangeTarget } from '@vcard/shared-types';
 import { createDb, type Db } from './db/client.js';
@@ -12,6 +12,11 @@ import {
   buildPlanAgent,
   buildPlanModel,
 } from './agent/plan-agent.js';
+import {
+  buildEditAgent,
+  buildEditModel,
+  buildInitialEditMessages,
+} from './agent/edit-agent.js';
 
 export type ApiBindings = {
   DATABASE_URL: string;
@@ -22,6 +27,8 @@ export type ApiBindings = {
   SUGGEST_QUEUE?: Queue;
   /** Test-only: inject a mocked LanguageModel for the plan endpoint. */
   __TEST_PLAN_MODEL__?: LanguageModel;
+  /** Test-only: inject a mocked LanguageModel for the edit endpoint. */
+  __TEST_EDIT_MODEL__?: LanguageModel;
 };
 
 type Variables = {
@@ -58,6 +65,11 @@ const patchCardSchema = z.object({
   title: z.string().optional(),
   body: z.string().optional(),
   version: z.number().int(),
+});
+
+const editCardSchema = z.object({
+  field: z.enum(['title', 'body']),
+  instruction: z.string().min(1).max(500),
 });
 
 const reorderSchema = z.object({
@@ -145,6 +157,12 @@ app.post('/projects/:id/plan', async (c) => {
   }
   const model: LanguageModel = testModel ?? buildPlanModel({ AIHUBMIX_API_KEY: apiKey! });
 
+  // Load selected skills in the order specified by skillIds (priority order).
+  const selectedSkills =
+    selectedSkillIds.length === 0
+      ? []
+      : await loadSkillsInOrder(db, selectedSkillIds);
+
   // Restart the plan: clear previous cards so the agent's create_card calls are
   // the only source of truth for this project's card set.
   await db.delete(cards).where(eq(cards.projectId, projectId));
@@ -156,6 +174,7 @@ app.post('/projects/:id/plan', async (c) => {
   const agent = buildPlanAgent({
     model,
     ctx: { db, projectId },
+    skills: selectedSkills,
   });
 
   return createAgentUIStreamResponse({
@@ -197,7 +216,42 @@ app.patch('/projects/:id/cards/:cardId', async (c) => {
   }
 
   await writeChange(db, projectId, 'user', 'card', cardId, 'patch_card', before, updated);
+  await triggerReflect(c.env, { projectId, cardId, trigger: 'edit' });
   return c.json(updated);
+});
+
+app.post('/cards/:id/edit', async (c) => {
+  const db = c.var.db;
+  const cardId = c.req.param('id');
+  const body = editCardSchema.parse(await c.req.json());
+
+  const card = await db.query.cards.findFirst({ where: eq(cards.id, cardId) });
+  if (!card) return c.json({ error: 'not found' }, 404);
+
+  const testModel = c.env?.__TEST_EDIT_MODEL__;
+  const apiKey = c.env?.AIHUBMIX_API_KEY ?? process.env.AIHUBMIX_API_KEY;
+  if (!testModel && !apiKey) {
+    return c.json({ error: 'AIHUBMIX_API_KEY not configured' }, 500);
+  }
+  const model: LanguageModel = testModel ?? buildEditModel({ AIHUBMIX_API_KEY: apiKey! });
+
+  // Pull immediate-neighbor cards (index ± 1) for tone consistency context.
+  const neighbors = await db
+    .select({ index: cards.index, role: cards.role, title: cards.title, body: cards.body })
+    .from(cards)
+    .where(eq(cards.projectId, card.projectId))
+    .orderBy(asc(cards.index));
+  const contextCards = neighbors.filter(
+    (c) => Math.abs(c.index - card.index) === 1,
+  );
+
+  const agent = buildEditAgent({ model, card, contextCards, field: body.field });
+
+  return createAgentUIStreamResponse({
+    agent,
+    uiMessages: buildInitialEditMessages(body.instruction),
+    abortSignal: c.req.raw.signal,
+  });
 });
 
 app.patch('/projects/:id/cards', async (c) => {
@@ -213,6 +267,7 @@ app.patch('/projects/:id/cards', async (c) => {
   }
 
   await writeChange(db, projectId, 'user', 'project', projectId, 'reorder_cards', null, order);
+  await triggerReflect(c.env, { projectId, trigger: 'reorder' });
   return c.json({ ok: true });
 });
 
@@ -258,6 +313,8 @@ app.post('/projects/:id/gen-jobs', async (c) => {
     .update(projects)
     .set({ status: 'generating', updatedAt: new Date() })
     .where(eq(projects.id, projectId));
+
+  await triggerReflect(c.env, { projectId, trigger: 'regen' });
 
   return c.json({ job, queued: projectCards.length }, 202);
 });
@@ -432,6 +489,33 @@ const officialSkillRows: SkillInsert[] = [
 
 async function seedOfficialSkills(db: Db) {
   await db.insert(skills).values(officialSkillRows).onConflictDoNothing();
+}
+
+/**
+ * Best-effort enqueue of a reflect message. We deliberately do NOT throw on
+ * missing binding — the user-facing action shouldn't fail because the async
+ * suggestion pipeline isn't configured (e.g., local node-server without
+ * SUGGEST_QUEUE binding).
+ */
+async function triggerReflect(
+  env: ApiBindings | undefined,
+  payload: { projectId: string; cardId?: string; trigger: 'edit' | 'reorder' | 'regen' | 'plan' },
+) {
+  const queue = env?.SUGGEST_QUEUE;
+  if (!queue) return;
+  try {
+    await queue.send(payload);
+  } catch (err) {
+    console.error('SUGGEST_QUEUE.send failed (non-fatal):', err);
+  }
+}
+
+/** Fetch skills by id and return them in the order of the input array. */
+async function loadSkillsInOrder(db: Db, skillIds: string[]) {
+  if (skillIds.length === 0) return [];
+  const rows = await db.select().from(skills).where(inArray(skills.id, skillIds));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return skillIds.map((id) => byId.get(id)).filter((row): row is typeof rows[number] => !!row);
 }
 
 function createZip(files: Array<{ name: string; content: string }>) {

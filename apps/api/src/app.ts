@@ -244,7 +244,13 @@ app.post('/cards/:id/edit', async (c) => {
     (c) => Math.abs(c.index - card.index) === 1,
   );
 
-  const agent = buildEditAgent({ model, card, contextCards, field: body.field });
+  // Load skills attached to the project so Edit honors stacking semantics
+  // (maxWordsPerCard, fewShotExamples, systemPrompt) the same way Plan does.
+  const project = await db.query.projects.findFirst({ where: eq(projects.id, card.projectId) });
+  const projectSkillIds = project?.skillIds ?? [];
+  const editSkills = projectSkillIds.length === 0 ? [] : await loadSkillsInOrder(db, projectSkillIds);
+
+  const agent = buildEditAgent({ model, card, contextCards, field: body.field, skills: editSkills });
 
   return createAgentUIStreamResponse({
     agent,

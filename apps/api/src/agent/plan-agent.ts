@@ -1,6 +1,7 @@
 import { ToolLoopAgent, stepCountIs, type LanguageModel } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createCardTool, type CreateCardCtx } from './tools/create-card.js';
+import { VOICE_TONE_RULES } from './voice-tone.js';
 import type { SkillRow } from '../db/schema.js';
 
 const BASE_SYSTEM_PROMPT = `你是一名小红书内容编辑。
@@ -33,6 +34,9 @@ export type BuildPlanAgentArgs = {
  * - Order matters: idx 0 has highest priority.
  * - Conflict fields (maxWordsPerCard, etc) — highest-priority value wins.
  * - Only skills whose appliesTo.stages includes 'plan' affect Plan generation.
+ *
+ * Each skill's `fewShotExamples` are concatenated into the prompt so the model
+ * sees concrete input→output pairs, not just abstract instructions.
  */
 export function buildPlanInstructions(skills: ReadonlyArray<SkillRow> = []): string {
   const planSkills = skills.filter((skill) => skill.appliesTo.stages.includes('plan'));
@@ -43,12 +47,19 @@ export function buildPlanInstructions(skills: ReadonlyArray<SkillRow> = []): str
       .maxWordsPerCard ?? DEFAULT_MAX_BODY;
 
   const limitsLine = `- 标题 ≤ ${DEFAULT_MAX_TITLE} 字，正文 ≤ ${maxBody} 字`;
-  const baseWithLimits = `${BASE_SYSTEM_PROMPT}\n${limitsLine}`;
+  const baseWithLimits = `${BASE_SYSTEM_PROMPT}\n${limitsLine}\n\n${VOICE_TONE_RULES}`;
 
   if (planSkills.length === 0) return baseWithLimits;
 
   const skillBlocks = planSkills
-    .map((skill, idx) => `### Skill #${idx + 1}: ${skill.name}\n${skill.systemPrompt}`)
+    .map((skill, idx) => {
+      const header = `### Skill #${idx + 1}: ${skill.name}\n${skill.systemPrompt}`;
+      if (skill.fewShotExamples.length === 0) return header;
+      const examples = skill.fewShotExamples
+        .map((ex, exIdx) => `示例 ${exIdx + 1}:\n  Input: ${ex.input}\n  Output: ${ex.output}`)
+        .join('\n');
+      return `${header}\n\n**Few-shot 示例**：\n${examples}`;
+    })
     .join('\n\n');
 
   return `${baseWithLimits}\n\n---\n\n# 已挂载 Skills（按优先级，idx 0 最高）\n\n${skillBlocks}`;

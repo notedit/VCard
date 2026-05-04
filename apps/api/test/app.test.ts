@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { app } from '../src/app.js';
 import { createDb } from '../src/db/client.js';
+import { cards } from '../src/db/schema.js';
 
 const DATABASE_URL = process.env.DATABASE_URL_TEST!;
 const db = createDb(DATABASE_URL);
@@ -26,24 +27,18 @@ describe('project and cards', () => {
     expect(pRes.status).toBe(201);
     const project = (await pRes.json()) as { id: string };
 
-    // 2. agent inserts a card via internal endpoint
-    const cardRes = await app.request(
-      '/internal/cards',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          projectId: project.id,
-          index: 0,
-          role: 'cover',
-          title: 't',
-          body: 'b',
-          version: 1,
-        }),
-      },
-      env,
-    );
-    expect(cardRes.status).toBe(201);
-    const card = (await cardRes.json()) as { id: string; version: number };
+    // 2. seed a card directly (bypassing agent path)
+    const [card] = await db
+      .insert(cards)
+      .values({
+        projectId: project.id,
+        index: 0,
+        role: 'cover',
+        title: 't',
+        body: 'b',
+        version: 1,
+      })
+      .returning();
 
     // 3. happy path: patch with correct version
     const okRes = await app.request(
@@ -76,21 +71,14 @@ describe('project and cards', () => {
 
     // insert 3 cards out of order
     for (const idx of [2, 0, 1]) {
-      await app.request(
-        '/internal/cards',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            projectId: project.id,
-            index: idx,
-            role: 'argument',
-            title: `c${idx}`,
-            body: '',
-            version: 1,
-          }),
-        },
-        env,
-      );
+      await db.insert(cards).values({
+        projectId: project.id,
+        index: idx,
+        role: 'argument',
+        title: `c${idx}`,
+        body: '',
+        version: 1,
+      });
     }
 
     const res = await app.request(`/projects/${project.id}`, {}, env);

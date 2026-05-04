@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "card_images_card_gen_version_unique" ON "card_images" USING btree ("card_id","gen_job_id","version");

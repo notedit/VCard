@@ -20,7 +20,3 @@ DATABASE_URL=
 
 # === Object storage / queues are configured as Workers bindings in wrangler.toml,
 # not as env vars. ===
-
-# === Container runtime ===
-# Local agent-base reachable URL (used by AgentSession DO when running wrangler dev)
-AGENT_CONTAINER_URL=http://localhost:7000

@@ -15,8 +15,8 @@ export function createCardTool(ctx: CreateCardCtx) {
     inputSchema: z.object({
       index: z.number().int().min(0).max(8),
       role: z.enum(['cover', 'hook', 'argument', 'list', 'payoff', 'cta']),
-      title: z.string().min(1).max(40),
-      body: z.string().min(1).max(200),
+      title: z.string().min(1).max(18),
+      body: z.string().min(1).max(80),
     }),
     execute: async (input) => {
       const [row] = await ctx.db

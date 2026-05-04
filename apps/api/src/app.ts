@@ -6,7 +6,7 @@ import { createAgentUIStreamResponse, type LanguageModel } from 'ai';
 import type { ChangeActor, ChangeTarget } from '@vcard/shared-types';
 import { createDb, type Db } from './db/client.js';
 import { cardImages, cards, changeLogs, genJobs, projects, skills } from './db/schema.js';
-import type { CardInsert, CardRow, SkillInsert } from './db/schema.js';
+import type { CardRow, SkillInsert } from './db/schema.js';
 import {
   buildInitialPlanMessages,
   buildPlanAgent,
@@ -21,7 +21,6 @@ import {
 export type ApiBindings = {
   DATABASE_URL: string;
   AIHUBMIX_API_KEY?: string;
-  AGENT_BASE_URL?: string;
   IMAGES?: R2Bucket;
   GEN_IMAGE_QUEUE?: Queue;
   SUGGEST_QUEUE?: Queue;
@@ -288,6 +287,14 @@ app.post('/projects/:id/gen-jobs', async (c) => {
     .orderBy(asc(cards.index));
   if (projectCards.length === 0) return c.json({ error: 'no_cards' }, 409);
 
+  // Idempotency: refuse if there's already a running job for this project.
+  // Client retries / double-clicks would otherwise spawn parallel GenJobs that
+  // race over each card's imageVersionId.
+  const running = await db.query.genJobs.findFirst({
+    where: and(eq(genJobs.projectId, projectId), eq(genJobs.status, 'running')),
+  });
+  if (running) return c.json({ error: 'job_already_running', jobId: running.id }, 409);
+
   // GenJob row is created synchronously (so the client gets a jobId for polling
   // /gen-jobs/:id/status), but image generation itself fans out via the queue.
   // The consumer (apps/api/src/queues/gen-image-consumer.ts) writes CardImage
@@ -387,14 +394,6 @@ app.post('/projects/:id/export', async (c) => {
       'content-disposition': `attachment; filename="vcard-${projectId}.zip"`,
     },
   });
-});
-
-app.post('/internal/cards', async (c) => {
-  const db = c.var.db;
-  const body = (await c.req.json()) as CardInsert;
-  const [row] = await db.insert(cards).values(body).returning();
-  await writeChange(db, row.projectId, 'agent', 'card', row.id, 'create_card', null, row);
-  return c.json(row, 201);
 });
 
 app.post('/changes/:id/undo', async (c) => {

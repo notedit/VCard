@@ -8,6 +8,13 @@
       "when": 1777883197828,
       "tag": "0000_careless_greymalkin",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777904840019,
+      "tag": "0001_funny_blink",
+      "breakpoints": true
     }
   ]
 }

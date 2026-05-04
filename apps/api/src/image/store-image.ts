@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { cardImages, cards, changeLogs } from '../db/schema.js';
 import type { CardImageRow } from '../db/schema.js';
@@ -28,12 +28,15 @@ export function buildR2Key(genJobId: string, cardId: string, version: number): s
 
 /**
  * Store generated image: upload PNG bytes to R2, insert CardImage row,
- * also bump the card's imageVersionId so the editor can swap to the new version,
- * and append a ChangeLog entry. Returns the inserted CardImage row.
+ * bump card.imageVersionId, and append ChangeLog. Returns the row.
  *
- * Note: R2 url field stores the *r2 key* (e.g. `card-images/<job>/<card>-v1.png`),
- * not a full URL. The Worker exposes a `/images/:key+` proxy or a CDN domain
- * resolves the key — both deferred. Frontend prepends API_BASE/images/.
+ * Idempotent on retry: the (card_id, gen_job_id, version) unique index lets a
+ * second invocation no-op the row insert. R2 put is naturally idempotent (same
+ * key → overwrite). The cards.imageVersionId update and changeLog insert run
+ * only on first success to avoid duplicate audit entries.
+ *
+ * R2 url field stores the *r2 key* (e.g. `card-images/<job>/<card>-v1.png`),
+ * not a full URL — the Worker proxy or CDN resolves it.
  */
 export async function storeCardImage(input: StoreImageInput): Promise<CardImageRow> {
   const version = 1;
@@ -44,7 +47,7 @@ export async function storeCardImage(input: StoreImageInput): Promise<CardImageR
     httpMetadata: { contentType: 'image/png' },
   });
 
-  const [imageRow] = await input.db
+  const inserted = await input.db
     .insert(cardImages)
     .values({
       cardId: input.cardId,
@@ -53,8 +56,27 @@ export async function storeCardImage(input: StoreImageInput): Promise<CardImageR
       url: key,
       fullPrompt: input.fullPrompt,
     })
+    .onConflictDoNothing({
+      target: [cardImages.cardId, cardImages.genJobId, cardImages.version],
+    })
     .returning();
 
+  if (inserted.length === 0) {
+    // Retry path — row already exists, return it without re-running side effects.
+    const [existing] = await input.db
+      .select()
+      .from(cardImages)
+      .where(
+        and(
+          eq(cardImages.cardId, input.cardId),
+          eq(cardImages.genJobId, input.genJobId),
+          eq(cardImages.version, version),
+        ),
+      );
+    return existing;
+  }
+
+  const imageRow = inserted[0];
   await input.db.update(cards).set({ imageVersionId: imageRow.id }).where(eq(cards.id, input.cardId));
 
   await input.db.insert(changeLogs).values({

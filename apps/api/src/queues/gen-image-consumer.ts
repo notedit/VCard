@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { createDb, type Db } from '../db/client.js';
 import { cardImages, cards, genJobs, projects } from '../db/schema.js';
 import { buildOpenAIClient, generateCardImage, type ImageClient } from '../image/gen-image.js';
@@ -68,11 +68,13 @@ export async function processGenImageMessage(
   await maybeMarkJobDone(db, job.id, project.id);
 }
 
-/** When every card in the project has at least one image for this job, mark done. */
+/**
+ * When every card in the project has an image for this job, atomically flip
+ * gen_jobs.status from 'running' to 'done'. Uses a conditional UPDATE so two
+ * concurrent consumers reaching `allDone=true` race safely — only one row
+ * actually transitions ('running' → 'done'); the other sees 0 rows updated.
+ */
 export async function maybeMarkJobDone(db: Db, genJobId: string, projectId: string): Promise<void> {
-  const job = await db.query.genJobs.findFirst({ where: eq(genJobs.id, genJobId) });
-  if (!job || job.status !== 'running') return;
-
   const projectCards = await db.select({ id: cards.id }).from(cards).where(eq(cards.projectId, projectId));
   if (projectCards.length === 0) return;
 
@@ -82,13 +84,12 @@ export async function maybeMarkJobDone(db: Db, genJobId: string, projectId: stri
     .where(eq(cardImages.genJobId, genJobId));
   const doneCardIds = new Set(generated.map((row) => row.cardId));
   const allDone = projectCards.every((row) => doneCardIds.has(row.id));
+  if (!allDone) return;
 
-  if (allDone) {
-    await db
-      .update(genJobs)
-      .set({ status: 'done', completedAt: new Date() })
-      .where(eq(genJobs.id, genJobId));
-  }
+  await db
+    .update(genJobs)
+    .set({ status: 'done', completedAt: new Date() })
+    .where(and(eq(genJobs.id, genJobId), eq(genJobs.status, 'running')));
 }
 
 /**

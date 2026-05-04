@@ -3,6 +3,12 @@ import { createDb, type Db } from '../db/client.js';
 import { cardImages, cards, genJobs, projects } from '../db/schema.js';
 import { buildOpenAIClient, generateCardImage, type ImageClient } from '../image/gen-image.js';
 import { storeCardImage, type R2PutBucket } from '../image/store-image.js';
+import {
+  buildSuggestionModel,
+  runSuggestionReflect,
+  type ReflectDeps,
+  type ReflectMessage,
+} from '../agent/suggestion-agent.js';
 import type { ApiBindings } from '../app.js';
 
 export type GenImageMessage = {
@@ -117,8 +123,26 @@ export async function handleQueueBatch(
   }
 
   if (batch.queue === 'suggestion-reflect') {
-    // MVP-5 territory; ack everything as no-op for now so messages don't pile up.
-    for (const msg of batch.messages) msg.ack();
+    if (!env.AIHUBMIX_API_KEY) {
+      // Without LLM, just ack so the queue doesn't pile up. Real ops should
+      // alert when this happens; for MVP-5 this is the safe default.
+      console.warn('suggestion-reflect: AIHUBMIX_API_KEY not configured, acking without running');
+      for (const msg of batch.messages) msg.ack();
+      return;
+    }
+    const deps: ReflectDeps = {
+      db: createDb(env.DATABASE_URL),
+      model: buildSuggestionModel({ AIHUBMIX_API_KEY: env.AIHUBMIX_API_KEY }),
+    };
+    for (const msg of batch.messages as ReadonlyArray<QueueMessage<ReflectMessage>>) {
+      try {
+        await runSuggestionReflect(msg.body, deps);
+        msg.ack();
+      } catch (err) {
+        console.error('suggestion-reflect failed:', err);
+        msg.retry();
+      }
+    }
     return;
   }
 

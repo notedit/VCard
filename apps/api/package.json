@@ -11,9 +11,11 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.74",
     "@hono/node-server": "^1.13.7",
     "@neondatabase/serverless": "^0.10.4",
     "@vcard/shared-types": "0.1.0",
+    "ai": "^6.0.174",
     "drizzle-orm": "^0.36.4",
     "hono": "^4.6.10",
     "zod": "^3.23.8"

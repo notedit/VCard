@@ -22,6 +22,27 @@
 
 ---
 
+## 0.1 M1 架构决策修订（2026-05-04）
+
+经过容器路径风险评估 + AIHubMix / Neon 验证后，**M1 不再使用 Cloudflare Containers + Pi Coding Agent SDK**。改用 **Workers + Vercel AI SDK `ToolLoopAgent`**：
+
+- **Plan / Edit / Suggestion** 三条 agent 都跑在 Workers 内，用 `ai` 包的 `ToolLoopAgent` + `createAgentUIStreamResponse`（标准 AI SDK UI Stream → 前端 `@ai-sdk/react useChat` 直接吃）
+- **Tools** 用 `tool({ inputSchema: zod, execute })`，execute 闭包持 Drizzle handle 直写 Neon + ChangeLog
+- **Skills** 作为 KV 表 + 静态导入；M2 marketplace 走 D1
+- **Image Service** 维持原方案：Workers 直接 `openai` SDK 调 gpt-image-2 + Queue + GenJob DO fan-out（§5.4 不变）
+- **`sandbox/agent-base/`** 作为 spike 参考保留，**不再动**；M2+ 真要 sandbox（user-authored 可执行 skill / Python tool / >5min 任务）时反向引入
+
+**为什么改**：
+1. 三条 agent 时长（Plan ≤2min / Edit <5s / Suggestion <10s）全部能在 Workers 5min wall-time 内；`await fetch` 不计 CPU。
+2. PRD §08 Skill schema 全是 JSON metadata + Markdown，**无可执行代码** → 不需要进程隔离。
+3. 状态恢复本来就在 PG/DO storage 层，容器 fs sessions 是反模式（CF Containers 无持久卷）。
+4. 一并消除 §10 两条 P0 风险（CF Containers 演进 / Pi 个人项目维护）。
+5. 测试矩阵从 `miniflare + Docker + 真实 LLM` 缩到 `miniflare + 真实 LLM`。
+
+下文 §4（Container 生命周期与池化）整段标 **⚠️ M2+ deferred**；§5.2 / §5.5 / §5.6 流程已用 ToolLoopAgent 覆写。原始容器方案保留作历史，便于 M2+ 反向引入时参考。
+
+---
+
 ## 1. 范围
 
 | 阶段 | In scope (M1) | Out of scope (M2+) |
@@ -39,22 +60,30 @@
 | 层 | 选型 | 理由 |
 |---|---|---|
 | 前端 | React 18 + Vite + TypeScript | 沿用 `design/`，按 Visual System 重做中保真；部署到 Cloudflare Pages |
-| **API 层** | **Hono on Cloudflare Workers** | Workers Runtime 原生 / 极轻 / TS 一等公民。承担：路由、鉴权、CRUD、SSE 转发、container proxy。**不跑 agent loop** |
-| **Agent 运行时（生产）** | **Cloudflare Containers**（由 Durable Object 持有 container 句柄） | 与 Workers 同栈、DO 原生管理 container 生命周期；适合长 agent loop（无 Workers 的 30s CPU 限） |
-| **Agent 运行时（本地）** | **Docker**，同一镜像 | 本地用 Docker 跑同一份 `agent-base` 镜像，便于阶段 0 spike + 调试 |
-| **Agent 框架** | **Pi Coding Agent SDK** (`@mariozechner/pi-coding-agent`) | 提供 agent loop / 自定义 tools / sessions / steering / Markdown skills 加载 |
-| 模型 | Pi `ModelRegistry` 接 Claude 4.5 Sonnet + Haiku 4.5；图像走 `openai` SDK 调 gpt-image-2 | gpt-image-2 不走 agent，单纯生成调用 |
+| **API 层** | **Hono on Cloudflare Workers** | Workers Runtime 原生 / 极轻 / TS 一等公民。承担：路由、鉴权、CRUD、SSE，**包含 agent loop**（M1 决策修订，见 §0.1） |
+| **Agent 框架** | **Vercel AI SDK** (`ai` v6) — `ToolLoopAgent` + `createAgentUIStreamResponse` | 官方推荐的多步 tool-calling 抽象；Workers 完全兼容；前端配套 `@ai-sdk/react useChat` |
+| ~~Agent 运行时（生产）~~ | ~~Cloudflare Containers~~ | ⚠️ M2+ deferred — 见 §0.1 |
+| ~~Agent 运行时（本地）~~ | ~~Docker~~ | ⚠️ M2+ deferred — 见 §0.1，`sandbox/agent-base/` 保留作 spike 参考 |
+| 模型路由 | AIHubMix（OpenAI 兼容路径 + Anthropic 原生路径）→ Claude Sonnet 4.5（Plan）/ Haiku 4.5（Edit/Suggestion）；图像走 `openai` SDK 调 gpt-image-2 | AIHubMix 已实测三条路径全通；gpt-image-2 不走 agent loop |
 | 数据库 | Neon Postgres + Drizzle ORM | Workers 用 Neon HTTP serverless 驱动直读；container 内 Pi tool 出站调 Workers 内部 API（统一 SoT） |
 | 对象存储 | R2 | CF 原生、零出口费用 |
 | 队列 | Cloudflare Queues | 9 图生成 fan-out + reflect 异步触发 |
 | 实时 | SSE（Workers）+ Durable Objects（fan-out） | DO 持有"container 流 ↔ 多个 SSE 客户端"的转发 |
 | URL 抓取 | `@mozilla/readability` + 自研针对小红书 / 公众号 / 知乎 | 在 Workers 上跑 |
 
-> **本地 = 云端同构**：开发者本地 `docker run agent-base`；生产把同一镜像推到 Cloudflare Container Registry。Workers 端通过 `ContainerHandle` 抽象层切换本地 HTTP / 远端 DO container API，业务代码一份。
+> ~~**本地 = 云端同构**：开发者本地 `docker run agent-base`；生产把同一镜像推到 Cloudflare Container Registry。Workers 端通过 `ContainerHandle` 抽象层切换本地 HTTP / 远端 DO container API，业务代码一份。~~ ⚠️ M2+ deferred — 见 §0.1
 
 ---
 
 ## 3. 高层架构
+
+> ⚠️ **以下原图反映容器路径，已被 §0.1 修订为 Workers + AI SDK ToolLoopAgent**。M1 实际架构：
+> - 客户端 → Workers (Hono) → ToolLoopAgent → AIHubMix → Anthropic/OpenAI
+> - 客户端响应通过 `createAgentUIStreamResponse` 直出 AI SDK UI Stream（标准 SSE）
+> - GenJob DO 仅做 9 图 fan-out 与 SSE 进度合并；不再有 AgentSession DO 持容器句柄
+> - Tools 在 Workers 内闭包持 Drizzle handle 直写 Neon
+>
+> 原始图保留作历史参考：
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -85,7 +114,7 @@
   │  │ Cloudflare Container          │   │
   │  │  (image: agent-base)          │   │
   │  │  Node 20 + Pi Coding Agent    │   │
-  │  │   · agent-server (HTTP/ws)    │   │
+│  │   · agent-server (HTTP/SSE)   │   │
   │  │   · custom tools              │   │
   │  │   · skills (Markdown)         │   │
   │  │   · ModelRegistry → Claude    │   │
@@ -100,13 +129,15 @@
 **通信模式**：
 
 - Workers ↔ AgentSession DO：Workers 内置 RPC
-- DO ↔ Container：CF Containers 由 DO 直接持有 container 实例句柄；M1 用 **WebSocket**（Pi 流式 token 密集，单连接最优）
+- DO ↔ Container：CF Containers 由 DO 直接持有 container 实例句柄；M1 用 **HTTP/SSE**（统一外部与内部流式协议，便于 Workers 代理与本地 curl 调试）
 - Container 内 agent → Anthropic / OpenAI：直连出站
-- 客户端 ↔ Workers：SSE，DO 把 container ws 事件 fan-out 成 SSE 推前端
+- 客户端 ↔ Workers：SSE，DO 透传或 fan-out container SSE 事件推前端
 
 ---
 
 ## 4. Container 生命周期与池化
+
+> ⚠️ **整段 M2+ deferred — 见 §0.1 修订**。M1 不跑容器；以下内容保留作 M2+ 重新引入容器时的设计参考。
 
 | 场景 | 时长 | 策略 |
 |---|---|---|
@@ -123,9 +154,9 @@ RUN npm i -g @mariozechner/pi-coding-agent
 COPY skills/ /app/skills/         # M1 三个 Markdown Skill
 COPY agent-server.ts /app/
 COPY tools/ /app/tools/           # 自定义业务 tools
-RUN npm i ws @anthropic-ai/sdk
+RUN npm i @mariozechner/pi-coding-agent tsx typescript
 EXPOSE 7000
-CMD ["node", "/app/agent-server.js"]
+CMD ["npm", "run", "start"]
 ```
 
 ### 降级路径
@@ -147,34 +178,46 @@ CMD ["node", "/app/agent-server.js"]
   - `PATCH /projects/:id/cards` — 拖拽重排（批量 order 数组）
 - 写动作必走 **ChangeLog**（见 5.8）
 
-### 5.2 Plan Proxy（Workers）+ Plan Agent（Container）
+### 5.2 Plan Agent（Workers · ToolLoopAgent）
 
-- **模型**：Claude 4.5 Sonnet
-- **API**：`POST /projects/:id/plan` → SSE
+> M1 修订：Workers 内直接跑 ToolLoopAgent，不再走容器。MVP-1 已落地（`apps/api/src/agent/plan-agent.ts`）。
+
+- **模型**：Claude Sonnet 4.5（通过 AIHubMix `/anthropic`）
+- **API**：`POST /projects/:id/plan` → AI SDK UI Stream（标准 SSE，前端 `useChat` 直接吃）
+- **核心代码形态**：
+  ```ts
+  const agent = new ToolLoopAgent({
+    model: anthropic('claude-sonnet-4-5'),
+    instructions: SYSTEM_PROMPT + buildSkillsPrompt(skillIds),
+    tools: { create_card: createCardTool({ db, projectId }), ... },
+    stopWhen: stepCountIs(20),
+  });
+  return createAgentUIStreamResponse({
+    agent,
+    uiMessages: buildInitialPlanMessages(topic),
+    abortSignal: c.req.raw.signal,
+  });
+  ```
 - **流程**：
-  1. Workers 路由到 `AgentSession DO`（按 projectId 哈希）
-  2. DO 检查是否已有活 container：无则启动新 container
-  3. DO 通过 ws 向 container 发 `{cmd: 'plan', topic, platform, skillIds}`
-  4. Container 内 Pi agent：
-     - 加载挂载的 Skill Markdown（Pi `ResourceLoader`）
-     - `Pi.subscribe()` 流式触发 Claude
-     - 自定义 tools：
-       - `create_card(index, role, title, body)`
-       - `update_card(cardId, patch)` → container 出站调 Workers 内部 API → ChangeLog + DB
-       - `reorder_cards(orderArray)` → 同上
-       - `propose_suggestion(cardId, type, message, action)` → 写 Suggestion 表
-       - `read_skill(id)` / `read_card(id)` → 读 DB
-  5. Pi 流式事件 ws push 给 DO；DO fan-out SSE 给客户端
-  6. **协议事件**：`event: card | strategy | suggestion | done | error`
-- 用户改 Plan 时，Workers 把 `{cmd: 'followUp', ...}` 投给 container（Pi `followUp()`），让 agent 决定是否补建议
+  1. 读 project，按需 update `skillIds`，清空旧 cards（restart-friendly），status → `'planning'`
+  2. 构造 ToolLoopAgent + 初始 user message（包含 topic）
+  3. `createAgentUIStreamResponse` 直返 Response，AI SDK 内部驱动 tool loop：每步模型→tool calls→Workers 跑 tool execute→把 tool 结果回灌 → 模型继续，直到无 tool call 或 `stepCountIs(20)`
+  4. 客户端 abort（关闭 EventSource）→ `c.req.raw.signal` → AI SDK 取消上游 fetch
+- **Tools**（execute 闭包持 `{ db, projectId }`，写库 + ChangeLog）：
+  - `create_card(index, role, title, body)` ← MVP-1 已实装
+  - `update_card(cardId, patch)`（MVP-1 后跟进）
+  - `reorder_cards(orderArray)`（MVP-1 后跟进）
+  - `propose_suggestion(...)` 由 Suggestion Service 反射阶段触发，不在 Plan tool 集合里
+- **多 turn followUp**（用户改 Plan）：客户端把已有 `uiMessages` 历史 + 新 user message 一并 POST 回来；ToolLoopAgent 接续上下文继续跑。无需服务端持久化对话。
+- ~~AgentSession DO~~ ⚠️ 不再需要（M2+ 才会重新引入做容器句柄管理）
 
 ### 5.3 Skills Service
 
-- **M1 数据**：3 个内置 Skill 双重表示：
-  - **Markdown 文件**（bundled 进 `agent-base` 镜像 `/app/skills/*.md`）：给 Pi agent 用
-  - **DB 元数据**（`skills` 表）：给 Web UI 用（名称、作者、标签、引用图）
+- **M1 数据**：3 个内置 Skill，单一表示：
+  - **`skills` 表行**（DB 持久 + Web UI 元数据）—— `apps/api/src/app.ts` `seedOfficialSkills()` 启动时 upsert
+  - 每条 row 的 `systemPrompt` 字段就是注入 ToolLoopAgent `instructions` 的源——不再需要单独的 Markdown 文件
 - **Schema**：沿用 PRD § 08 v1
-- **叠加策略**（Workers 侧拼装后随 `cmd: 'plan'` 一并发给 container）：
+- **叠加策略**（Workers 侧拼装后注入 ToolLoopAgent `instructions`）：
   - `Project.skillIds` 数组顺序 = 优先级（idx 0 最高）
   - System prompt 拼接：`[base] + skill[0].systemPrompt + ... + skill[n].systemPrompt`
   - 冲突字段（如 `maxWordsPerCard`）以高优先级为准
@@ -202,25 +245,25 @@ CMD ["node", "/app/agent-server.js"]
 - **单卡重生 / 蒙版**：单条 Queue 消息，复用流程
 - **可选分级**（M1 待评估）：`gpt-image-1`（40s，便宜）作为预览模式，`gpt-image-2`（4min，高质量）作为最终模式，让用户在编辑器选
 
-### 5.5 Edit Proxy + Edit Agent（Container · ⌘K）
+### 5.5 Edit Agent（Workers · ToolLoopAgent · ⌘K）
 
-- **模型**：Haiku 4.5（首字符 < 1.2s）
-- **API**：`POST /cards/:id/edit` → SSE
+> M1 修订：Workers 内直接 ToolLoopAgent，不走容器池。形态与 §5.2 同。
+
+- **模型**：Haiku 4.5（首字符 < 1.2s；通过 AIHubMix `/anthropic`）
+- **API**：`POST /cards/:id/edit` → AI SDK UI Stream
 - **流程**：
-  1. Workers 从预热 container 池 borrow 一个
-  2. ws 发 `{cmd: 'edit', cardId, instruction, currentField, currentValue, contextCards}`
-  3. Pi agent 单轮，工具：
-     - `propose_edit(field, newValue, rationale)` — **不直接落库**，把 diff 推回 Workers
-  4. Workers SSE token stream → 客户端
-  5. 完成时 push `event: diff`
-  6. 用户 confirm → `PATCH /cards/:id`（version 乐观锁 + ChangeLog）；cancel 不动
-  7. 完成后 container return 池子（不 stop，等下次 borrow）
+  1. 构造 ToolLoopAgent，instructions 包含 `currentField` / `currentValue` / `contextCards`，user message 是 instruction
+  2. 单一 tool：`propose_edit(field, newValue, rationale)` — execute 不落库，**只返回 diff**（execute return 值进 stream，前端从 stream 拿到 diff）
+  3. 用户 confirm → 客户端调 `PATCH /cards/:id`（version 乐观锁 + ChangeLog）；cancel 不动
 - 三种入口（自由 NLU / 一键候选 / 模板指令）共用同一 endpoint，前端拼好 instruction
+- ~~预热 container 池~~ ⚠️ 不需要：Workers 冷启就足够命中 < 1.2s
 
-### 5.6 Suggestion Service（Pi reflect agent · 异步）
+### 5.6 Suggestion Service（Workers · ToolLoopAgent · 异步）
 
-- **模型**：Haiku 4.5
-- **触发**：编辑 / 重排 / 重生 后，Workers 推消息到 CF Queue；reflect consumer 借池子里的 container 做 reflect
+> M1 修订：reflect agent 跑在 Queue consumer Worker 内，不再借容器池。
+
+- **模型**：Haiku 4.5（通过 AIHubMix `/anthropic`）
+- **触发**：编辑 / 重排 / 重生 后，Workers 推消息到 `suggestion-reflect` Queue；consumer Worker 收到消息后构造 ToolLoopAgent 跑一轮（无流式回客户端，直接写 Suggestion 表）
 - **类型**：`structure` / `platform_sop` / `quality`（Visual System 黄/蓝/紫）
 - **工具**：`read_project` / `read_card` / `propose_suggestion`
 - **实体**：`Suggestion { id, projectId, cardId?, type, message, actionLabel, actionPayload, status, createdAt }`
@@ -356,7 +399,7 @@ Web ──POST /projects/:id/plan──▶ Hono Worker
                                     │   ├─ 命中：复用（resume from sleep）
                                     │   └─ 未命中：CF Containers API 启动 agent-base
                                     │
-                                    │ DO ──ws──▶ Container
+                                    │ DO ──HTTP POST /plan──▶ Container
                                     │            { cmd: 'plan', topic, skills }
                                     │
                                     │            Container 内 Pi agent
@@ -364,10 +407,10 @@ Web ──POST /projects/:id/plan──▶ Hono Worker
                                     │            ├─ Pi.subscribe()
                                     │            └─ Claude 4.5 Sonnet
                                     │
-                                    │ Container ──ws──▶ DO
-                                    │   { type: 'tool_call', tool: 'create_card', ... }
-                                    │   { type: 'tool_call', tool: 'propose_suggestion', ... }
-                                    │   { type: 'done' }
+                                    │ Container ──SSE──▶ DO
+                                    │   event: card
+                                    │   event: suggestion
+                                    │   event: done
                                     │
                                     │ DO ──Workers fetch──▶ Project Service
                                     │   POST /internal/cards (落 ChangeLog + DB)
@@ -401,7 +444,7 @@ POST /gen-jobs ─▶ GenJob(queued) + 9 条 CF Queue 消息
 ```
 Web ──POST /cards/:id/edit──▶ Worker
                                     │ borrow container from pool
-                                    │ ws: { cmd: 'edit', ... }
+                                    │ HTTP/SSE: { cmd: 'edit', ... }
                                     │
                                     ◀── token stream（首字符 < 1.2s）
                                     │ tool_call: propose_edit(field, newValue, rationale)
@@ -435,18 +478,18 @@ POST /changes/:id/undo
 - `npm i @mariozechner/pi-coding-agent`
 - 写 `sandbox/agent-base/`：
   - `Dockerfile`
-  - `agent-server.ts`：监听 ws，把 Pi `subscribe()` 转发给 ws 客户端
+  - `agent-server.ts`：监听 HTTP POST，把 Pi `subscribe()` 转发成 SSE
   - `tools/`：3-4 个最小 tool（`create_card` 写到本地 JSON / `propose_suggestion` log）
 - `docker build -t agent-base .` → `docker run -p 7000:7000 agent-base`
-- 写 `host-driver.ts`（本机 Node 脚本）：连 ws、发 `{cmd:'plan', topic, skills}`、打印事件流
+- 用 `curl -N` 或 `host-driver.ts`：POST `/plan` 发 `{cmd:'plan', topic, skills}`、打印 SSE 事件流
 - 跑通最小 demo：输入"周末 200 块在胡同吃到撑" → 流式生成 3 张卡片 + 1 条 suggestion
 
 **必过 checklist**：
 
 - [ ] Docker 容器能装 `@mariozechner/pi-coding-agent` 并启动
 - [ ] Container 出站能调通 Anthropic API
-- [ ] ws 端口暴露、host 能连
-- [ ] Pi 流式事件完整跨 ws，无丢字
+- [ ] HTTP/SSE 端口暴露、host 能连
+- [ ] Pi 流式事件完整跨 SSE，无丢字
 - [ ] Pi 自定义 tool 能被 agent 调用且返回值正常
 - [ ] Pi sessions 持久化（用自定义 ResourceLoader 写到容器卷 / 后期切到 Neon+R2）
 
@@ -492,7 +535,7 @@ POST /changes/:id/undo
 | § 10 P0 ⌘K 首字符 < 1.2s | p50/p95 上报 → Cloudflare Analytics |
 | § 10 P0 Agent 建议采纳率 ≥ 30% | 埋点 + 周报 |
 | **新增** container 冷启 < 2s（CF Containers resume） | benchmark 脚本 |
-| **新增** Pi 流式事件跨 ws 0 丢字 | 阶段 0 spike 必过 |
+| **新增** Pi 流式事件跨 SSE 0 丢字 | 阶段 0 spike 必过 |
 | **新增** 单图生成 p95 < 6min（gpt-image-2） | Queue consumer 实测打点；超时即记 partial |
 | **新增** 整组 9 图生成 p95 < 15min | GenJob DO 完成时间打点 |
 
@@ -502,18 +545,20 @@ POST /changes/:id/undo
 
 | 风险 | 缓解 |
 |---|---|
-| **Cloudflare Containers 仍在演进**（生命周期 / 入站端口转发 / 计费可能变） | 阶段 0 用 Docker 验证业务逻辑，阶段 3 再对齐 CF Containers 当时的 API；保持业务代码与 container 启动方式解耦（`ContainerHandle` 抽象） |
-| **Pi 是个人项目，长期维护风险** | vendoring 兜底：锁版本 + monorepo 镜像源码（`packages/pi-vendor`），最坏自己维护 |
-| **Pi sessions 默认本地存储** | 自定义 `ResourceLoader`，把 sessions 持久化到 Neon（结构化）+ R2（消息体）；阶段 1 完成 |
-| Container 池预热成本 | 灰度阶段 N=5；按 QPS 自动伸缩在阶段 3 加 |
+| ~~Cloudflare Containers 仍在演进~~ | ⚠️ 已消除（M1 不用容器，见 §0.1） |
+| ~~Pi 是个人项目，长期维护风险~~ | ⚠️ 已消除（M1 不用 Pi，见 §0.1） |
+| ~~Pi sessions 默认本地存储~~ | ⚠️ 已消除（M1 用 ToolLoopAgent，会话历史直接由前端 `useChat` 持有，服务端无状态） |
+| ~~Container 池预热成本~~ | ⚠️ 已消除 |
+| ~~Pi 流式 JSON 解析容错~~ | ⚠️ 已消除（AI SDK 处理 stream 解析） |
+| ~~Workers CPU 时间限~~ | ⚠️ 已确认非问题：`await fetch` 不计 CPU；Plan/Edit/Suggest 全部在 5min wall 内 |
+| **AI SDK 6 仍在 0.x → 1.0 演进** | 锁版本 `^6.0.x`；CI 跑契约测试（mock model + 真 SDK）防破坏性升级 |
+| **多 turn 历史 token 膨胀** | 客户端 `useChat` 历史无限增长 → 服务端做最大 N 轮裁剪；Anthropic prompt cache 命中率 |
 | gpt-image-2 中文 ~90%，无 OCR 兜底 | 编辑器"重新生成此卡"按钮显眼；prompt 工程加强（位置 / 字号约束写进阶段 prompt） |
 | 主体一致性脸部翻车 | M1 默认关闭 lock_people（PRD 已规定） |
-| Pi 流式 JSON 解析容错 | Pi 自带 streaming + tool_call 协议；DO 持久化已写部分卡片，断流可恢复 |
 | gpt-image-2 限频 | CF Queues `max_concurrency=3` + 指数退避；多账号轮询作为后置 |
-| 撤回链失效 | 所有 Agent 写 tool 走 ChangeLog 事务；e2e 覆盖每种动作 |
+| 撤回链失效 | 所有 Agent 写 tool 走 ChangeLog；e2e 覆盖每种动作 |
 | 多 Skill 叠加 prompt 爆 token | 每个 Skill `systemPrompt` 限 800 token；超限截断尾部 + 监控告警 |
 | Suggestion 噪声打扰用户 | 同会话最多 5 条（PRD § 12）+ 忽略 3 次降权 |
-| Workers CPU 时间限 | 长任务都在 container 内；Workers 只管 SSE 转发与 CRUD |
 
 ---
 
@@ -543,7 +588,7 @@ VCard/
 ├── sandbox/
 │   ├── agent-base/         # 同时给 Docker 本地 + CF Containers 用
 │   │   ├── Dockerfile
-│   │   ├── agent-server.ts # ws 服务，Pi 适配层
+│   │   ├── agent-server.ts # HTTP/SSE 服务，Pi 适配层
 │   │   └── tools/          # 自定义 tools
 │   └── host-driver/        # 本机 spike 脚本
 ├── packages/
@@ -575,3 +620,4 @@ VCard/
 |---|---|---|
 | 2026-05-03 | 初稿 | Issue #1 |
 | 2026-05-04 | § 5.4 加 gpt-image-2 实测延迟 228s/图 + 12min 整组 + 6min 超时；§ 9 增加单图/整组延迟验收线 | AIHubMix 实测 |
+| 2026-05-04 | **§ 0.1 架构修订**：放弃 CF Containers + Pi SDK，改用 Workers + Vercel AI SDK `ToolLoopAgent`；§3 架构图前置 deferred 横幅；§4 整段 deferred；§5.2/5.3/5.5/5.6 流程重写；§10 风险表汰换 6 行 | MVP-1 落地 + 风险评估 |

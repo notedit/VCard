@@ -1,16 +1,27 @@
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { z } from 'zod';
 import { and, asc, eq } from 'drizzle-orm';
+import { createAgentUIStreamResponse, type LanguageModel } from 'ai';
 import type { ChangeActor, ChangeTarget } from '@vcard/shared-types';
 import { createDb, type Db } from './db/client.js';
-import { cards, changeLogs, projects } from './db/schema.js';
-import type { CardInsert, CardRow } from './db/schema.js';
+import { cardImages, cards, changeLogs, genJobs, projects, skills } from './db/schema.js';
+import type { CardInsert, CardRow, SkillInsert } from './db/schema.js';
+import {
+  buildInitialPlanMessages,
+  buildPlanAgent,
+  buildPlanModel,
+} from './agent/plan-agent.js';
 
 export type ApiBindings = {
   DATABASE_URL: string;
+  AIHUBMIX_API_KEY?: string;
+  AGENT_BASE_URL?: string;
   IMAGES?: R2Bucket;
   GEN_IMAGE_QUEUE?: Queue;
   SUGGEST_QUEUE?: Queue;
+  /** Test-only: inject a mocked LanguageModel for the plan endpoint. */
+  __TEST_PLAN_MODEL__?: LanguageModel;
 };
 
 type Variables = {
@@ -20,6 +31,27 @@ type Variables = {
 const createProjectSchema = z.object({
   topic: z.string().min(1),
   userId: z.string().default('demo-user'),
+});
+
+const setProjectSkillsSchema = z.object({
+  skillIds: z.array(z.string().uuid()).max(5),
+});
+
+const createPlanSchema = z.object({
+  topic: z.string().min(1).optional(),
+  skillIds: z.array(z.string().uuid()).optional(),
+});
+
+const mainSubjectSchema = z.object({
+  description: z.string().min(1),
+  refImages: z.array(z.string()).default([]),
+  locks: z.array(z.enum(['lighting', 'camera', 'people', 'props'])).default([]),
+});
+
+const createGenJobSchema = z.object({
+  mainSubject: mainSubjectSchema,
+  artStyle: z.string().default('真实摄影'),
+  textLayout: z.enum(['top', 'calligraphy', 'fullscreen', 'caption']).default('top'),
 });
 
 const patchCardSchema = z.object({
@@ -33,6 +65,8 @@ const reorderSchema = z.object({
 });
 
 export const app = new Hono<{ Bindings: ApiBindings; Variables: Variables }>();
+
+app.use('*', cors({ origin: '*', allowMethods: ['GET', 'POST', 'PATCH', 'OPTIONS'] }));
 
 app.use('*', async (c, next) => {
   const url = c.env?.DATABASE_URL ?? process.env.DATABASE_URL;
@@ -48,6 +82,13 @@ app.post('/projects', async (c) => {
   return c.json(row, 201);
 });
 
+app.get('/skills', async (c) => {
+  const db = c.var.db;
+  await seedOfficialSkills(db);
+  const rows = await db.select().from(skills).orderBy(asc(skills.name));
+  return c.json({ skills: rows });
+});
+
 app.get('/projects/:id', async (c) => {
   const db = c.var.db;
   const id = c.req.param('id');
@@ -59,6 +100,69 @@ app.get('/projects/:id', async (c) => {
     .where(eq(cards.projectId, id))
     .orderBy(asc(cards.index));
   return c.json({ project, cards: projectCards });
+});
+
+app.patch('/projects/:id/skills', async (c) => {
+  const db = c.var.db;
+  const projectId = c.req.param('id');
+  const { skillIds } = setProjectSkillsSchema.parse(await c.req.json());
+
+  await seedOfficialSkills(db);
+  const existing = await db.query.projects.findFirst({ where: eq(projects.id, projectId) });
+  if (!existing) return c.json({ error: 'not found' }, 404);
+
+  const knownSkills = await db.select().from(skills);
+  const knownIds = new Set(knownSkills.map((skill) => skill.id));
+  const unknown = skillIds.filter((id) => !knownIds.has(id));
+  if (unknown.length > 0) return c.json({ error: 'unknown_skill', skillIds: unknown }, 400);
+
+  const [updated] = await db
+    .update(projects)
+    .set({ skillIds, updatedAt: new Date() })
+    .where(eq(projects.id, projectId))
+    .returning();
+  await writeChange(db, projectId, 'user', 'project', projectId, 'set_project_skills', existing, updated);
+  return c.json(updated);
+});
+
+app.post('/projects/:id/plan', async (c) => {
+  const db = c.var.db;
+  const projectId = c.req.param('id');
+  const body = createPlanSchema.parse(await c.req.json().catch(() => ({})));
+  await seedOfficialSkills(db);
+
+  const project = await db.query.projects.findFirst({ where: eq(projects.id, projectId) });
+  if (!project) return c.json({ error: 'not found' }, 404);
+
+  const topic = body.topic ?? project.topic;
+  const selectedSkillIds = body.skillIds ?? project.skillIds;
+
+  // Resolve the LanguageModel: test override > AIHubMix-backed Anthropic.
+  const testModel = c.env?.__TEST_PLAN_MODEL__;
+  const apiKey = c.env?.AIHUBMIX_API_KEY ?? process.env.AIHUBMIX_API_KEY;
+  if (!testModel && !apiKey) {
+    return c.json({ error: 'AIHUBMIX_API_KEY not configured' }, 500);
+  }
+  const model: LanguageModel = testModel ?? buildPlanModel({ AIHUBMIX_API_KEY: apiKey! });
+
+  // Restart the plan: clear previous cards so the agent's create_card calls are
+  // the only source of truth for this project's card set.
+  await db.delete(cards).where(eq(cards.projectId, projectId));
+  await db
+    .update(projects)
+    .set({ status: 'planning', updatedAt: new Date(), skillIds: selectedSkillIds })
+    .where(eq(projects.id, projectId));
+
+  const agent = buildPlanAgent({
+    model,
+    ctx: { db, projectId },
+  });
+
+  return createAgentUIStreamResponse({
+    agent,
+    uiMessages: buildInitialPlanMessages(topic),
+    abortSignal: c.req.raw.signal,
+  });
 });
 
 app.patch('/projects/:id/cards/:cardId', async (c) => {
@@ -110,6 +214,126 @@ app.patch('/projects/:id/cards', async (c) => {
 
   await writeChange(db, projectId, 'user', 'project', projectId, 'reorder_cards', null, order);
   return c.json({ ok: true });
+});
+
+app.post('/projects/:id/gen-jobs', async (c) => {
+  const db = c.var.db;
+  const projectId = c.req.param('id');
+  const body = createGenJobSchema.parse(await c.req.json());
+  const project = await db.query.projects.findFirst({ where: eq(projects.id, projectId) });
+  if (!project) return c.json({ error: 'not found' }, 404);
+
+  const projectCards = await db.select().from(cards).where(eq(cards.projectId, projectId)).orderBy(asc(cards.index));
+  if (projectCards.length === 0) return c.json({ error: 'no_cards' }, 409);
+
+  const [job] = await db
+    .insert(genJobs)
+    .values({
+      projectId,
+      status: 'running',
+      mainSubject: body.mainSubject,
+      artStyle: body.artStyle,
+      textLayout: body.textLayout,
+    })
+    .returning();
+
+  const images = await db
+    .insert(cardImages)
+    .values(
+      projectCards.map((card) => ({
+        cardId: card.id,
+        genJobId: job.id,
+        version: 1,
+        url: `https://vcard.local/images/${job.id}/${String(card.index + 1).padStart(2, '0')}.png`,
+        fullPrompt: buildImagePrompt(project.topic, card, body.mainSubject.description, body.artStyle, body.textLayout),
+      })),
+    )
+    .returning();
+  await writeChanges(
+    db,
+    images.map((image) => ({
+      projectId,
+      actor: 'agent',
+      target: 'image',
+      targetId: image.id,
+      action: 'create_card_image',
+      before: null,
+      after: image,
+    })),
+  );
+
+  const [updatedJob] = await db
+    .update(genJobs)
+    .set({ status: 'done', completedAt: new Date() })
+    .where(eq(genJobs.id, job.id))
+    .returning();
+  await db.update(projects).set({ status: 'editing', updatedAt: new Date() }).where(eq(projects.id, projectId));
+
+  return c.json({ job: updatedJob, images }, 201);
+});
+
+app.get('/gen-jobs/:id/status', async (c) => {
+  const db = c.var.db;
+  const jobId = c.req.param('id');
+  const job = await db.query.genJobs.findFirst({ where: eq(genJobs.id, jobId) });
+  if (!job) return c.json({ error: 'not found' }, 404);
+
+  const images = await db
+    .select({
+      id: cardImages.id,
+      cardId: cardImages.cardId,
+      url: cardImages.url,
+      cardIndex: cards.index,
+    })
+    .from(cardImages)
+    .innerJoin(cards, eq(cardImages.cardId, cards.id))
+    .where(eq(cardImages.genJobId, jobId))
+    .orderBy(asc(cards.index));
+
+  return c.json({
+    job,
+    done: images.map((image) => image.cardIndex),
+    pending: [],
+    failed: [],
+    images,
+  });
+});
+
+app.post('/projects/:id/export', async (c) => {
+  const db = c.var.db;
+  const projectId = c.req.param('id');
+  const project = await db.query.projects.findFirst({ where: eq(projects.id, projectId) });
+  if (!project) return c.json({ error: 'not found' }, 404);
+
+  const rows = await db
+    .select({
+      card: cards,
+      imageUrl: cardImages.url,
+    })
+    .from(cards)
+    .leftJoin(cardImages, eq(cards.id, cardImages.cardId))
+    .where(eq(cards.projectId, projectId))
+    .orderBy(asc(cards.index));
+
+  if (rows.length === 0) return c.json({ error: 'no_cards' }, 409);
+
+  const files = rows.map((row) => ({
+    name: `${String(row.card.index + 1).padStart(2, '0')}_${row.card.role}.txt`,
+    content: `${row.card.title}\n\n${row.card.body}\n\nimage: ${row.imageUrl ?? 'not generated'}\n`,
+  }));
+  files.unshift({
+    name: 'manifest.json',
+    content: JSON.stringify({ project, cardCount: rows.length, exportedAt: new Date().toISOString() }, null, 2),
+  });
+
+  const archive = createZip(files);
+  await db.update(projects).set({ status: 'exported', updatedAt: new Date() }).where(eq(projects.id, projectId));
+  return new Response(archive, {
+    headers: {
+      'content-type': 'application/zip',
+      'content-disposition': `attachment; filename="vcard-${projectId}.zip"`,
+    },
+  });
 });
 
 app.post('/internal/cards', async (c) => {
@@ -169,4 +393,181 @@ async function writeChange(
     before: before as CardRow,
     after: after as CardRow,
   });
+}
+
+async function writeChanges(
+  db: Db,
+  logs: Array<{
+    projectId: string;
+    actor: ChangeActor;
+    target: ChangeTarget;
+    targetId: string;
+    action: string;
+    before: unknown;
+    after: unknown;
+  }>,
+) {
+  if (logs.length === 0) return;
+  await db.insert(changeLogs).values(
+    logs.map((log) => ({
+      ...log,
+      before: log.before as CardRow,
+      after: log.after as CardRow,
+    })),
+  );
+}
+
+const officialSkillRows: SkillInsert[] = [
+  {
+    id: '00000000-0000-4000-8000-000000000101',
+    name: '爆款标题手',
+    author: 'VCard',
+    category: ['title', 'redbook'],
+    systemPrompt: '强化小红书封面标题：具体、反差、可收藏，避免空泛形容词。',
+    fewShotExamples: [{ input: '北京胡同美食', output: '200块吃到扶墙出：7家胡同老店' }],
+    imageRefs: [],
+    outputSchema: { mustHave: ['cover', 'hook'], maxWordsPerCard: 42, titleEmojiProb: 0.2 },
+    appliesTo: { platforms: ['redbook'], stages: ['plan', 'edit'] },
+    isOfficial: true,
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000102',
+    name: '小红书种草体',
+    author: 'VCard',
+    category: ['copywriting', 'redbook'],
+    systemPrompt: '使用自然口吻、经验密度和避坑表达，让内容像真实用户分享。',
+    fewShotExamples: [{ input: '咖啡店推荐', output: '这家我会二刷，但只建议工作日下午去。' }],
+    imageRefs: [],
+    outputSchema: { mustHave: ['list', 'cta'], maxWordsPerCard: 56, titleEmojiProb: 0.1 },
+    appliesTo: { platforms: ['redbook'], stages: ['plan', 'edit', 'image_prompt'] },
+    isOfficial: true,
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000103',
+    name: '真实摄影',
+    author: 'VCard',
+    category: ['image', 'photo'],
+    systemPrompt: '图片提示词偏真实摄影：自然光、现场感、不过度商业棚拍。',
+    fewShotExamples: [{ input: '餐厅', output: '自然光下的桌面细节，手机摄影质感。' }],
+    imageRefs: [],
+    outputSchema: {},
+    appliesTo: { platforms: ['redbook'], stages: ['image_prompt'] },
+    isOfficial: true,
+  },
+];
+
+async function seedOfficialSkills(db: Db) {
+  await db.insert(skills).values(officialSkillRows).onConflictDoNothing();
+}
+
+function buildImagePrompt(topic: string, card: CardRow, subject: string, artStyle: string, textLayout: string) {
+  return [
+    `小红书 4:5 卡片，主题：${topic}`,
+    `主体锚点：${subject}`,
+    `画面风格：${artStyle}`,
+    `文字布局：${textLayout}`,
+    `第 ${card.index + 1} 张，角色：${card.role}`,
+    `烧入标题：${card.title}`,
+    `正文：${card.body}`,
+  ].join('\n');
+}
+
+function createZip(files: Array<{ name: string; content: string }>) {
+  const encoder = new TextEncoder();
+  const localParts: Uint8Array[] = [];
+  const centralParts: Uint8Array[] = [];
+  let offset = 0;
+
+  for (const file of files) {
+    const name = encoder.encode(file.name);
+    const content = encoder.encode(file.content);
+    const crc = crc32(content);
+    const local = concat([
+      u32(0x04034b50),
+      u16(20),
+      u16(0),
+      u16(0),
+      u16(0),
+      u16(0),
+      u32(crc),
+      u32(content.length),
+      u32(content.length),
+      u16(name.length),
+      u16(0),
+      name,
+      content,
+    ]);
+    localParts.push(local);
+
+    centralParts.push(
+      concat([
+        u32(0x02014b50),
+        u16(20),
+        u16(20),
+        u16(0),
+        u16(0),
+        u16(0),
+        u16(0),
+        u32(crc),
+        u32(content.length),
+        u32(content.length),
+        u16(name.length),
+        u16(0),
+        u16(0),
+        u16(0),
+        u16(0),
+        u32(0),
+        u32(offset),
+        name,
+      ]),
+    );
+    offset += local.length;
+  }
+
+  const central = concat(centralParts);
+  const end = concat([
+    u32(0x06054b50),
+    u16(0),
+    u16(0),
+    u16(files.length),
+    u16(files.length),
+    u32(central.length),
+    u32(offset),
+    u16(0),
+  ]);
+  return concat([...localParts, central, end]);
+}
+
+function u16(value: number) {
+  const bytes = new Uint8Array(2);
+  new DataView(bytes.buffer).setUint16(0, value, true);
+  return bytes;
+}
+
+function u32(value: number) {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, value >>> 0, true);
+  return bytes;
+}
+
+function concat(parts: Uint8Array[]) {
+  const length = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+
+function crc32(bytes: Uint8Array) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let i = 0; i < 8; i += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }

@@ -1,0 +1,26 @@
+# wrangler dev local secrets — copy to .dev.vars and fill from ~/.secrets/common.env
+# (.dev.vars is gitignored; this .example file lists key names only)
+
+# === LLM gateway (M1 verified path: AIHubMix) ===
+# OpenAI-compatible endpoint (chat + images + gpt-image-2)
+AIHUBMIX_API_KEY=
+AIHUBMIX_OPENAI_BASE_URL=https://aihubmix.com/v1
+# Anthropic native endpoint (note: NO /v1 suffix)
+AIHUBMIX_ANTHROPIC_BASE_URL=https://aihubmix.com
+
+# === Fallback paths (optional, for redundancy) ===
+# Cloudflare AI Gateway (chat works; image endpoints currently 401, see memory)
+CF_AIG_TOKEN=
+CF_AIG_ACCOUNT_ID=
+CF_AIG_GATEWAY_SLUG=voxflow
+
+# === Database ===
+# Neon Postgres serverless connection string (HTTP driver via @neondatabase/serverless)
+DATABASE_URL=
+
+# === Object storage / queues are configured as Workers bindings in wrangler.toml,
+# not as env vars. ===
+
+# === Container runtime ===
+# Local agent-base reachable URL (used by AgentSession DO when running wrangler dev)
+AGENT_CONTAINER_URL=http://localhost:7000

@@ -1,0 +1,60 @@
+name = "vcard-api"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Local-dev secrets live in apps/api/.dev.vars (gitignored).
+# Real values come from ~/.secrets/common.env per CLAUDE.md.
+
+# === R2 (object storage) ===
+# Bucket created 2026-05-04 in account 5c3963ae0bb77580f819067743eaf5bd.
+# bucket_name = production / preview_bucket_name = used by `wrangler dev`.
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "vcard-images-dev"
+preview_bucket_name = "vcard-images-test"
+
+# === Cloudflare Queues ===
+# Producers: bind from any handler that needs to enqueue.
+[[queues.producers]]
+queue = "gen-image-jobs"
+binding = "GEN_IMAGE_QUEUE"
+
+[[queues.producers]]
+queue = "suggestion-reflect"
+binding = "SUGGEST_QUEUE"
+
+# Consumers: same Worker handles both queues. tech-design §5.4 dictates
+# max_concurrency=3 for image gen (gpt-image-2 ≈ 4min/image, avoids rate limits).
+[[queues.consumers]]
+queue = "gen-image-jobs"
+max_batch_size = 1
+max_batch_timeout = 1
+max_concurrency = 3
+max_retries = 2
+dead_letter_queue = "gen-image-jobs-dlq"
+
+[[queues.consumers]]
+queue = "suggestion-reflect"
+max_batch_size = 1
+max_concurrency = 5
+max_retries = 1
+
+# === Durable Objects ===
+# Skeleton classes; logic landing in 阶段 1 (container/queue plumbing).
+[[durable_objects.bindings]]
+name = "AGENT_SESSION"
+class_name = "AgentSession"
+
+[[durable_objects.bindings]]
+name = "GEN_JOB"
+class_name = "GenJob"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["AgentSession", "GenJob"]
+
+# === Notes ===
+# - `npm run dev` (tsx + @hono/node-server) does NOT exercise DOs — use it for
+#   endpoint iteration only. For DOs, use `npx wrangler dev`.
+# - DATABASE_URL must be in apps/api/.dev.vars (gitignored), copied from ~/.secrets/common.env.

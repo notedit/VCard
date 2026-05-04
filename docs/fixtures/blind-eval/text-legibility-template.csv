@@ -1,0 +1,3 @@
+image_id,reviewer,text_visible,text_correct,text_readable,comments
+# Example row (delete before real use):
+# img_98a2b4,r01,true,false,3,把"胡同"写成了"胡间"

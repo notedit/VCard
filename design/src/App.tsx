@@ -9,6 +9,7 @@ import { ScreenImageGen } from './screens/ScreenImageGen';
 import { ScreenEditor } from './screens/ScreenEditor';
 import { ScreenPositioning } from './screens/ScreenPositioning';
 import { ScreenStyleGuide } from './screens/ScreenStyleGuide';
+import { ScreenP0Console } from './screens/ScreenP0Console';
 
 export default function App() {
   const [showAnnotations, setShowAnnotations] = useState(true);
@@ -30,6 +31,7 @@ export default function App() {
           {showPositioning && <a href="#positioning">0 · 定位</a>}
           <a href="#style">0.5 · 设计风格</a>
           <a href="#entry">1 · 入口</a>
+          <a href="#p0">P0 · 跑通</a>
           <a href="#plan">2 · Plan</a>
           <a href="#skills">3 · Skills</a>
           <a href="#image">4 · 视觉</a>
@@ -67,6 +69,9 @@ export default function App() {
 
         <Artboard id="entry" label="1 · 入口 · 平台优先">
           <ScreenEntry variant={entryVariant} />
+        </Artboard>
+        <Artboard id="p0" label="P0 · 真实 API 闭环">
+          <ScreenP0Console />
         </Artboard>
         <Artboard id="plan" label="2 · Plan · 可对话的 AI 大纲">
           <ScreenPlan />

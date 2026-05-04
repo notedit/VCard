@@ -126,6 +126,38 @@ describe('POST /projects/:id/gen-jobs producer', () => {
     expect(projectRow?.status).toBe('generating');
   });
 
+  it('returns 409 if a job is already running (idempotency on retry / double-click)', async () => {
+    const { project } = await seedProjectWithCards('idempotent topic', 2);
+    const q = fakeQueue();
+    const body = JSON.stringify({
+      mainSubject: { description: 'x', refImages: [], locks: [] },
+      artStyle: '',
+      textLayout: 'top',
+    });
+
+    const first = await app.request(
+      `/projects/${project.id}/gen-jobs`,
+      { method: 'POST', body },
+      { DATABASE_URL, GEN_IMAGE_QUEUE: q.queue },
+    );
+    expect(first.status).toBe(202);
+    const firstBody = (await first.json()) as { job: { id: string } };
+    const firstJobId = firstBody.job.id;
+
+    const second = await app.request(
+      `/projects/${project.id}/gen-jobs`,
+      { method: 'POST', body },
+      { DATABASE_URL, GEN_IMAGE_QUEUE: q.queue },
+    );
+    expect(second.status).toBe(409);
+    const secondBody = (await second.json()) as { error: string; jobId: string };
+    expect(secondBody.error).toBe('job_already_running');
+    expect(secondBody.jobId).toBe(firstJobId);
+
+    // Second call should NOT have enqueued additional messages.
+    expect(q.sent).toHaveLength(2);
+  });
+
   it('returns 409 if project has no cards', async () => {
     const [project] = await db.insert(projects).values({ topic: 'no cards', userId: 'demo-user' }).returning();
     const q = fakeQueue();
@@ -213,6 +245,37 @@ describe('processGenImageMessage consumer (1 message at a time)', () => {
       .where(eq(changeLogs.projectId, project.id));
     const imageLogs = logs.filter((l) => l.target === 'image' && l.action === 'create_card_image');
     expect(imageLogs).toHaveLength(2);
+  });
+
+  it('is idempotent on retry: second processGenImageMessage call no-ops the row insert and ChangeLog', async () => {
+    const { project, cards: seeded } = await seedProjectWithCards('retry topic', 1);
+    const [job] = await db
+      .insert(genJobs)
+      .values({
+        projectId: project.id,
+        status: 'running',
+        mainSubject: { description: 'x', refImages: [], locks: [] },
+        artStyle: '',
+        textLayout: 'top',
+      })
+      .returning();
+    const r2 = fakeBucket();
+    const ai = fakeImageClient();
+    const payload = { cardId: seeded[0].id, genJobId: job.id, projectId: project.id };
+
+    await processGenImageMessage(payload, { db, client: ai.client, bucket: r2.bucket });
+    await processGenImageMessage(payload, { db, client: ai.client, bucket: r2.bucket });
+
+    // R2 put runs twice (idempotent overwrite of same key) and the model is called twice
+    // (Queue retry semantics — the consumer doesn't know if the prior call succeeded).
+    // But DB rows must be exactly one each:
+    const images = await db.select().from(cardImages).where(eq(cardImages.cardId, seeded[0].id));
+    expect(images).toHaveLength(1);
+    const imageLogs = await db
+      .select()
+      .from(changeLogs)
+      .where(eq(changeLogs.projectId, project.id));
+    expect(imageLogs.filter((l) => l.action === 'create_card_image')).toHaveLength(1);
   });
 
   it('throws on missing card so the queue can retry', async () => {

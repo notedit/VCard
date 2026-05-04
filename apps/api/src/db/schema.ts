@@ -8,6 +8,7 @@ import {
   jsonb,
   uuid,
   index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import type {
   CardRole,
@@ -152,6 +153,11 @@ export const cardImages = pgTable(
   },
   (t) => ({
     cardIdx: index('card_images_card_id_idx').on(t.cardId),
+    cardGenVersionUnique: uniqueIndex('card_images_card_gen_version_unique').on(
+      t.cardId,
+      t.genJobId,
+      t.version,
+    ),
   }),
 );
 

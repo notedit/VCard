@@ -547,6 +547,17 @@ POST /changes/:id/undo
 | **新增** 整组 9 图生成 p95 < 15min | GenJob DO 完成时间打点 |
 | **MVP-2** Image pipeline 正确性 | mocked 单测覆盖 producer + consumer 全路径（5 cases）；opt-in 1-image 真实 API 测试（`RUN_REAL_IMAGE_TEST=1`，约 $0.16/run） |
 
+### 9.1 CI 自动化（GitHub Actions）
+
+`.github/workflows/ci.yml`，`push: main` 与 `pull_request` 触发，两个并行 Job：
+
+- **typecheck** — `npm ci` + `npm run typecheck`（覆盖所有 workspace）。无 secret 依赖，给出最快反馈。
+- **test (vitest + Neon)** — 跑 `apps/api/test/**`，需要仓库 secret `DATABASE_URL_TEST`（Neon 专用测试分支）。步骤：drizzle-kit migrate（幂等）→ `npm test`。
+  - 因测试间用 `TRUNCATE` 共享同一 Neon 分支，job 配 `concurrency: { group: ci-test, cancel-in-progress: false }` 跨运行串行。
+  - fork PR 自动跳过（拿不到 secret）。
+
+`apps/api/test/setup.ts` 同时支持本地（读 `~/.secrets/common.env`）与 CI（读 `process.env`），无需切换。
+
 ---
 
 ## 10. 风险与缓解

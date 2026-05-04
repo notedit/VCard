@@ -220,12 +220,23 @@ app.post('/projects/:id/gen-jobs', async (c) => {
   const db = c.var.db;
   const projectId = c.req.param('id');
   const body = createGenJobSchema.parse(await c.req.json());
+  const queue = c.env?.GEN_IMAGE_QUEUE;
+  if (!queue) return c.json({ error: 'GEN_IMAGE_QUEUE not configured' }, 500);
+
   const project = await db.query.projects.findFirst({ where: eq(projects.id, projectId) });
   if (!project) return c.json({ error: 'not found' }, 404);
 
-  const projectCards = await db.select().from(cards).where(eq(cards.projectId, projectId)).orderBy(asc(cards.index));
+  const projectCards = await db
+    .select()
+    .from(cards)
+    .where(eq(cards.projectId, projectId))
+    .orderBy(asc(cards.index));
   if (projectCards.length === 0) return c.json({ error: 'no_cards' }, 409);
 
+  // GenJob row is created synchronously (so the client gets a jobId for polling
+  // /gen-jobs/:id/status), but image generation itself fans out via the queue.
+  // The consumer (apps/api/src/queues/gen-image-consumer.ts) writes CardImage
+  // rows + flips status='done' when every card lands.
   const [job] = await db
     .insert(genJobs)
     .values({
@@ -237,40 +248,25 @@ app.post('/projects/:id/gen-jobs', async (c) => {
     })
     .returning();
 
-  const images = await db
-    .insert(cardImages)
-    .values(
-      projectCards.map((card) => ({
-        cardId: card.id,
-        genJobId: job.id,
-        version: 1,
-        url: `https://vcard.local/images/${job.id}/${String(card.index + 1).padStart(2, '0')}.png`,
-        fullPrompt: buildImagePrompt(project.topic, card, body.mainSubject.description, body.artStyle, body.textLayout),
-      })),
-    )
-    .returning();
-  await writeChanges(
-    db,
-    images.map((image) => ({
-      projectId,
-      actor: 'agent',
-      target: 'image',
-      targetId: image.id,
-      action: 'create_card_image',
-      before: null,
-      after: image,
+  await queue.sendBatch(
+    projectCards.map((card) => ({
+      body: { cardId: card.id, genJobId: job.id, projectId } satisfies GenImageQueueMessage,
     })),
   );
 
-  const [updatedJob] = await db
-    .update(genJobs)
-    .set({ status: 'done', completedAt: new Date() })
-    .where(eq(genJobs.id, job.id))
-    .returning();
-  await db.update(projects).set({ status: 'editing', updatedAt: new Date() }).where(eq(projects.id, projectId));
+  await db
+    .update(projects)
+    .set({ status: 'generating', updatedAt: new Date() })
+    .where(eq(projects.id, projectId));
 
-  return c.json({ job: updatedJob, images }, 201);
+  return c.json({ job, queued: projectCards.length }, 202);
 });
+
+type GenImageQueueMessage = {
+  cardId: string;
+  genJobId: string;
+  projectId: string;
+};
 
 app.get('/gen-jobs/:id/status', async (c) => {
   const db = c.var.db;
@@ -395,28 +391,6 @@ async function writeChange(
   });
 }
 
-async function writeChanges(
-  db: Db,
-  logs: Array<{
-    projectId: string;
-    actor: ChangeActor;
-    target: ChangeTarget;
-    targetId: string;
-    action: string;
-    before: unknown;
-    after: unknown;
-  }>,
-) {
-  if (logs.length === 0) return;
-  await db.insert(changeLogs).values(
-    logs.map((log) => ({
-      ...log,
-      before: log.before as CardRow,
-      after: log.after as CardRow,
-    })),
-  );
-}
-
 const officialSkillRows: SkillInsert[] = [
   {
     id: '00000000-0000-4000-8000-000000000101',
@@ -458,18 +432,6 @@ const officialSkillRows: SkillInsert[] = [
 
 async function seedOfficialSkills(db: Db) {
   await db.insert(skills).values(officialSkillRows).onConflictDoNothing();
-}
-
-function buildImagePrompt(topic: string, card: CardRow, subject: string, artStyle: string, textLayout: string) {
-  return [
-    `小红书 4:5 卡片，主题：${topic}`,
-    `主体锚点：${subject}`,
-    `画面风格：${artStyle}`,
-    `文字布局：${textLayout}`,
-    `第 ${card.index + 1} 张，角色：${card.role}`,
-    `烧入标题：${card.title}`,
-    `正文：${card.body}`,
-  ].join('\n');
 }
 
 function createZip(files: Array<{ name: string; content: string }>) {

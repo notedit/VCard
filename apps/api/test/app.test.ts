@@ -9,7 +9,7 @@ const env = { DATABASE_URL };
 
 async function truncateAll() {
   await db.execute(
-    sql`TRUNCATE TABLE projects, skills, change_logs RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE TABLE projects, skills, change_logs, gen_jobs, card_images, suggestions RESTART IDENTITY CASCADE`,
   );
 }
 
@@ -98,4 +98,10 @@ describe('project and cards', () => {
     const body = (await res.json()) as { cards: { index: number }[] };
     expect(body.cards.map((c) => c.index)).toEqual([0, 1, 2]);
   });
+
+  // The previous "runs the P0 flow" mega-test was retired in MVP-1: it asserted
+  // the bespoke `event: card / event: done` SSE format which the /plan endpoint
+  // no longer emits (now uses AI SDK UI Stream). Plan coverage moved to
+  // test/plan-agent.test.ts. The gen-jobs / export pieces will be re-tested
+  // standalone in MVP-2 when the queue-backed image pipeline lands.
 });

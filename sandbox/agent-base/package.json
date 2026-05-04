@@ -1,0 +1,11 @@
+{
+  "name": "agent-base",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node agent-server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

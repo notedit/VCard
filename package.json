@@ -1,0 +1,13 @@
+{
+  "name": "vcard-m1",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "sandbox/*"
+  ],
+  "scripts": {
+    "typecheck": "npm run -ws typecheck",
+    "test": "npm run -ws test"
+  }
+}

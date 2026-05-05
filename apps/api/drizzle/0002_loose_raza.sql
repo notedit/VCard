@@ -1,0 +1,2 @@
+ALTER TABLE "cards" ADD CONSTRAINT "cards_image_version_id_card_images_id_fk" FOREIGN KEY ("image_version_id") REFERENCES "public"."card_images"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "cards_image_version_id_idx" ON "cards" USING btree ("image_version_id");

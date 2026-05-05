@@ -9,6 +9,7 @@ import {
   uuid,
   index,
   uniqueIndex,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import type {
   CardRole,
@@ -94,13 +95,21 @@ export const cards = pgTable(
     role: cardRoleEnum('role').notNull(),
     title: text('title').notNull().default(''),
     body: text('body').notNull().default(''),
-    imageVersionId: uuid('image_version_id'),
+    // Forward ref to cardImages (declared below). ON DELETE SET NULL so that
+    // deleting an image row nulls out the pointer instead of cascading-deleting
+    // the card. Cycle is safe because the reverse direction (cardImages.cardId)
+    // uses ON DELETE CASCADE. AnyPgColumn return type breaks the TS circularity
+    // (cards → cardImages → cards via FKs).
+    imageVersionId: uuid('image_version_id').references((): AnyPgColumn => cardImages.id, {
+      onDelete: 'set null',
+    }),
     userEdited: boolean('user_edited').notNull().default(false),
     locked: boolean('locked').notNull().default(false),
     version: integer('version').notNull().default(1),
   },
   (t) => ({
     projectIdx: index('cards_project_id_index_idx').on(t.projectId, t.index),
+    imageVersionIdx: index('cards_image_version_id_idx').on(t.imageVersionId),
   }),
 );
 

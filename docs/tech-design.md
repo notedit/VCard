@@ -13,8 +13,8 @@
 |---|---|
 | 技术栈 | 全栈 TypeScript（仅例外：无） |
 | API 部署 | Cloudflare Workers |
-| Agent 运行时 | Cloudflare Containers（生产）/ Docker（本地） |
-| Agent 框架 | Pi Coding Agent SDK (`@mariozechner/pi-coding-agent`) |
+| Agent 运行时 | Cloudflare Workers 内运行 ToolLoopAgent |
+| Agent 框架 | Vercel AI SDK (`ToolLoopAgent` + AI SDK UI Stream) |
 | 文字校验 | **不做 OCR**，gpt-image-2 直出 + 用户主动重生 |
 | 验证策略 | 验证先行（CLAUDE.md），每个 P0 验收先定测试形态 |
 
@@ -28,8 +28,8 @@
 
 - **Plan / Edit / Suggestion** 三条 agent 都跑在 Workers 内，用 `ai` 包的 `ToolLoopAgent` + `createAgentUIStreamResponse`（标准 AI SDK UI Stream → 前端 `@ai-sdk/react useChat` 直接吃）
 - **Tools** 用 `tool({ inputSchema: zod, execute })`，execute 闭包持 Drizzle handle 直写 Neon + ChangeLog
-- **Skills** 作为 KV 表 + 静态导入；M2 marketplace 走 D1
-- **Image Service** 维持原方案：Workers 直接 `openai` SDK 调 gpt-image-2 + Queue + GenJob DO fan-out（§5.4 不变）
+- **Skills** 作为 Postgres 表 + 官方 seed 数据；M2 marketplace 继续扩展同一 schema
+- **Image Service** 维持 Workers producer + Queue consumer：Workers 直接 `openai` SDK 调 gpt-image-2，R2 存图，客户端轮询 GenJob status
 - **`sandbox/agent-base/`** 作为 spike 参考保留，**不再动**；M2+ 真要 sandbox（user-authored 可执行 skill / Python tool / >5min 任务）时反向引入
 
 **为什么改**：
@@ -39,7 +39,7 @@
 4. 一并消除 §10 两条 P0 风险（CF Containers 演进 / Pi 个人项目维护）。
 5. 测试矩阵从 `miniflare + Docker + 真实 LLM` 缩到 `miniflare + 真实 LLM`。
 
-下文 §4（Container 生命周期与池化）整段标 **⚠️ M2+ deferred**；§5.2 / §5.5 / §5.6 流程已用 ToolLoopAgent 覆写。原始容器方案保留作历史，便于 M2+ 反向引入时参考。
+旧的 Containers / Pi 路径只保留在 `sandbox/agent-base/` 作为 spike 参考，不再是 M1 主线。
 
 ---
 
@@ -62,107 +62,58 @@
 | 前端 | React 18 + Vite + TypeScript | 沿用 `design/`，按 Visual System 重做中保真；部署到 Cloudflare Pages |
 | **API 层** | **Hono on Cloudflare Workers** | Workers Runtime 原生 / 极轻 / TS 一等公民。承担：路由、鉴权、CRUD、SSE，**包含 agent loop**（M1 决策修订，见 §0.1） |
 | **Agent 框架** | **Vercel AI SDK** (`ai` v6) — `ToolLoopAgent` + `createAgentUIStreamResponse` | 官方推荐的多步 tool-calling 抽象；Workers 完全兼容；前端配套 `@ai-sdk/react useChat` |
-| ~~Agent 运行时（生产）~~ | ~~Cloudflare Containers~~ | ⚠️ M2+ deferred — 见 §0.1 |
-| ~~Agent 运行时（本地）~~ | ~~Docker~~ | ⚠️ M2+ deferred — 见 §0.1，`sandbox/agent-base/` 保留作 spike 参考 |
-| 模型路由 | AIHubMix（OpenAI 兼容路径 + Anthropic 原生路径）→ Claude Sonnet 4.5（Plan）/ Haiku 4.5（Edit/Suggestion）；图像走 `openai` SDK 调 gpt-image-2 | AIHubMix 已实测三条路径全通；gpt-image-2 不走 agent loop |
-| 数据库 | Neon Postgres + Drizzle ORM | Workers 用 Neon HTTP serverless 驱动直读；container 内 Pi tool 出站调 Workers 内部 API（统一 SoT） |
+| 模型路由 | AIHubMix（OpenAI `/v1` + Anthropic-compatible `/v1/messages`）→ Claude Sonnet 4.5（Plan）/ Haiku 4.5（Edit/Suggestion）；图像走 `openai` SDK 调 gpt-image-2 | AIHubMix 已实测三条路径全通；gpt-image-2 不走 agent loop |
+| 数据库 | Neon Postgres + Drizzle ORM | Workers 用 Neon HTTP serverless 驱动直读；Tool execute 闭包持 DB handle 写入 |
 | 对象存储 | R2 | CF 原生、零出口费用 |
 | 队列 | Cloudflare Queues | 9 图生成 fan-out + reflect 异步触发 |
-| 实时 | SSE（Workers）+ Durable Objects（fan-out） | DO 持有"container 流 ↔ 多个 SSE 客户端"的转发 |
+| 实时 | AI SDK UI Stream（Plan/Edit）+ 轮询 GenJob status（Image） | GenJob SSE fan-out 延后 |
 | URL 抓取 | `@mozilla/readability` + 自研针对小红书 / 公众号 / 知乎 | 在 Workers 上跑 |
-
-> ~~**本地 = 云端同构**：开发者本地 `docker run agent-base`；生产把同一镜像推到 Cloudflare Container Registry。Workers 端通过 `ContainerHandle` 抽象层切换本地 HTTP / 远端 DO container API，业务代码一份。~~ ⚠️ M2+ deferred — 见 §0.1
 
 ---
 
 ## 3. 高层架构
 
-> ⚠️ **以下原图反映容器路径，已被 §0.1 修订为 Workers + AI SDK ToolLoopAgent**。M1 实际架构：
-> - 客户端 → Workers (Hono) → ToolLoopAgent → AIHubMix → Anthropic/OpenAI
-> - 客户端响应通过 `createAgentUIStreamResponse` 直出 AI SDK UI Stream（标准 SSE）
-> - GenJob DO 仅做 9 图 fan-out 与 SSE 进度合并；不再有 AgentSession DO 持容器句柄
-> - Tools 在 Workers 内闭包持 Drizzle handle 直写 Neon
->
-> 原始图保留作历史参考：
-
 ```
 ┌──────────────────────────────────────────────────┐
-│ Web (React + Vite, Cloudflare Pages)             │
+│ Web / Studio (React + Vite, Cloudflare Pages)    │
 └──────────────┬───────────────────────────────────┘
-               │ HTTP + SSE
+               │ HTTP + AI SDK UI Stream
 ┌──────────────▼───────────────────────────────────┐
-│ Hono on Cloudflare Workers (API)                 │
-│  ┌──────────┬──────────┬─────────┬─────────┐    │
-│  │ Project  │ Plan     │ Skills  │ Image   │    │
-│  │ Service  │ Proxy    │ Service │ Service │    │
-│  └──────────┴──────────┴─────────┴─────────┘    │
-│  ┌──────────┬──────────┬─────────────────────┐  │
-│  │ Edit     │ Suggest  │ Export / ChangeLog  │  │
-│  │ Proxy    │ Proxy    │                     │  │
-│  └──────────┴──────────┴─────────────────────┘  │
-└─┬────────┬───────┬─────────────────────┬────────┘
-  │        │       │                     │
-  │        ▼       │                     │
-  │   Durable Objects                    │
-  │   ┌──────────────────────────────┐   │
-  │   │ AgentSession DO              │ ◀── 管理 container 实例 + 客户端 SSE 列表
-  │   │ GenJob DO                    │ ◀── 9 图 fan-out
-  │   └──────────────┬───────────────┘   │
-  │                  │                   │
-  │                  ▼                   │
-  │  ┌───────────────────────────────┐   │
-  │  │ Cloudflare Container          │   │
-  │  │  (image: agent-base)          │   │
-  │  │  Node 20 + Pi Coding Agent    │   │
-│  │   · agent-server (HTTP/SSE)   │   │
-  │  │   · custom tools              │   │
-  │  │   · skills (Markdown)         │   │
-  │  │   · ModelRegistry → Claude    │   │
-  │  └───────────────────────────────┘   │
-  │                  │                   │
-  ▼                  ▼                   ▼
-┌──────────┐  ┌──────────────┐  ┌──────────────┐
-│ Neon PG  │  │ CF Queues    │  │ R2 / KV      │
-└──────────┘  └──────────────┘  └──────────────┘
+│ Hono on Cloudflare Workers                       │
+│  Project / Cards / Skills / Export / Images      │
+│  Plan Agent  → ToolLoopAgent → create_card       │
+│  Edit Agent  → ToolLoopAgent → propose_edit      │
+│  Suggestion  → Queue consumer → propose_suggest  │
+│  Image Job   → Queue producer + status polling   │
+└─┬───────────────┬──────────────────────┬─────────┘
+  │               │                      │
+  ▼               ▼                      ▼
+┌──────────┐  ┌──────────────┐     ┌──────────────┐
+│ Neon PG  │  │ CF Queues    │     │ R2 Images    │
+└──────────┘  └──────────────┘     └──────────────┘
+       ▲              │
+       │              ▼
+       └────── AIHubMix / Anthropic / OpenAI
 ```
 
 **通信模式**：
 
-- Workers ↔ AgentSession DO：Workers 内置 RPC
-- DO ↔ Container：CF Containers 由 DO 直接持有 container 实例句柄；M1 用 **HTTP/SSE**（统一外部与内部流式协议，便于 Workers 代理与本地 curl 调试）
-- Container 内 agent → Anthropic / OpenAI：直连出站
-- 客户端 ↔ Workers：SSE，DO 透传或 fan-out container SSE 事件推前端
+- 客户端 ↔ Workers：HTTP + AI SDK UI Stream（Plan/Edit）
+- Workers ↔ AIHubMix：Anthropic 模型用于 Plan/Edit/Suggestion，OpenAI 图像路径用于 gpt-image-2
+- Workers ↔ Neon：Drizzle + Neon HTTP driver
+- Workers ↔ Queues：`gen-image-jobs` 处理图片，`suggestion-reflect` 处理异步建议
+- Workers ↔ R2：`CardImage.url` 存 R2 key，`GET /images/*` 代理读取
 
 ---
 
-## 4. Container 生命周期与池化
+## 4. M2+ Sandbox Deferred
 
-> ⚠️ **整段 M2+ deferred — 见 §0.1 修订**。M1 不跑容器；以下内容保留作 M2+ 重新引入容器时的设计参考。
+M1 不运行 Cloudflare Containers，也不需要 Docker/Pi 适配层。只有当 M2+ 出现以下需求时，才重新评估 sandbox：
 
-| 场景 | 时长 | 策略 |
-|---|---|---|
-| Plan（30s-2min） | 中 | 每个 Project 一个 container（AgentSession DO 持有），完成后保留 30 分钟（CF Container sleep）；用户回到 Project 命中 resume |
-| ⌘K Edit（< 5s） | 短 | 共享 **预热池** N=5 常驻 container（独立 DO 群管理），按需 borrow/return |
-| Suggestion reflect（异步，< 10s） | 短 | 同上预热池 |
-
-### `agent-base` 镜像
-
-```dockerfile
-FROM node:20-alpine
-WORKDIR /app
-RUN npm i -g @mariozechner/pi-coding-agent
-COPY skills/ /app/skills/         # M1 三个 Markdown Skill
-COPY agent-server.ts /app/
-COPY tools/ /app/tools/           # 自定义业务 tools
-RUN npm i @mariozechner/pi-coding-agent tsx typescript
-EXPOSE 7000
-CMD ["npm", "run", "start"]
-```
-
-### 降级路径
-
-- **本地**：`docker run -p 7000:7000 agent-base`，Workers `wrangler dev` 用环境变量切到 `http://localhost:7000`
-- **云端**：DO 通过 CF Container API 启动同名镜像，自动获得 container handle
+- 用户自定义可执行 Skill
+- Python / 浏览器 / 文件系统等长任务工具
+- 单次 agent 任务超过 Workers 5min wall-time
+- 需要隔离第三方代码或持久 workspace
 
 ---
 
@@ -231,7 +182,7 @@ CMD ["npm", "run", "start"]
 
 - **模型**：gpt-image-2，Workers 内通过 AIHubMix `/v1` 走 `openai` SDK
 - **实测延迟**（2026-05-04，AIHubMix 通路）：**单图 p50 ≈ 228s（gpt-image-2）**，gpt-image-1 ≈ 40s 作为对照
-- **架构硬约束**：Workers 单请求 30s CPU / 5min wall 上限——9 图同步在 Worker 内不可能。**Queue + GenJob DO fan-out 是必需路径**
+- **架构硬约束**：Workers 单请求 30s CPU / 5min wall 上限——9 图同步在 Worker 内不可能。**Queue fan-out 是必需路径**
 - **实体**：`GenJob`、`CardImage`
 - **代码落点**：
   - `apps/api/src/image/gen-image.ts`：构造 prompt + 调 `images.generate({ model: 'gpt-image-2' })`；`ImageClient` 接口让测试注入 mock
@@ -243,10 +194,10 @@ CMD ["npm", "run", "start"]
   2. project status → `'generating'`
   3. Queue consumer (`max_concurrency=3`) 处理每条消息：调 gpt-image-2 → 上传 R2 → 写 `CardImage` + 更新 `card.imageVersionId` + 写 ChangeLog
   4. 每条处理完调用 `maybeMarkJobDone`：当 project 所有 card 都拿到 image 时，`GenJob.status='done'`
-  5. 客户端通过 `GET /gen-jobs/:id/status` 轮询（MVP-2 暂不做 SSE 推送；GenJob DO 仍是 skeleton）
+  5. 客户端通过 `GET /gen-jobs/:id/status` 轮询
   6. **不做 OCR 校验**：失败由用户在编辑器点"重新生成此卡"触发
 - **超时策略**：Queue consumer 单条消息 `timeout = 6min`（覆盖 gpt-image-2 p95），超时由 wrangler.toml `max_retries=2` 重试，最终入 DLQ `gen-image-jobs-dlq`
-- **R2 URL 约定**：`CardImage.url` 字段当前存 R2 **key**（不是完整 URL）。前端访问需经 Worker `GET /images/*` 反向代理或配置 R2 公开域名——两者都延后实装
+- **R2 URL 约定**：`CardImage.url` 字段当前存 R2 **key**（不是完整 URL）。前端通过 Worker `GET /images/*` 反向代理访问
 - **Prompt 拼接**（实装）：`小红书 4:5 卡片 + 主题 + 主体锚点 + 锁定项 + 画面风格 + 文字布局 + 第N张/角色 + 烧入标题 + 正文`（`buildImagePrompt` in `gen-image.ts`）
 - **缓存键**（设计未实装）：`hash(project_id, card_index, full_prompt)` → `image_url` 存 Workers KV
 - **单卡重生 / 蒙版**：单条 Queue 消息，复用流程（key 用 `-v2.png` 递增）
@@ -300,7 +251,7 @@ CMD ["npm", "run", "start"]
 PRD § 12 强约束：Agent 改动 100% 可逆。
 
 - **实体**：`ChangeLog { id, projectId, actor: 'user'|'agent', target, targetId, action, before, after, createdAt }`
-- 所有 Pi tool 的 write 路径必须 Workers 侧先写 ChangeLog 再写业务表（事务）
+- 所有 Agent write tool 必须写 ChangeLog；高风险路径需要事务或补偿机制
 - **API**：`POST /changes/:id/undo`
 - **撤回链**：连续撤 N 步，冲突时停在最近一次手动写入
 
@@ -308,7 +259,7 @@ PRD § 12 强约束：Agent 改动 100% 可逆。
 
 ## 6. 核心数据模型
 
-落到 `packages/shared-types/`，前端 / Workers / container 内的 Pi tools 共享单一数据源。
+落到 `packages/shared-types/`，前端 / Workers / Agent tools 共享单一数据源。
 
 ```typescript
 type Platform = 'redbook' | 'greenbook';
@@ -413,36 +364,18 @@ interface ChangeLog {
 
 ```
 Web ──POST /projects/:id/plan──▶ Hono Worker
-                                    │ → AgentSession DO (per project)
-                                    │
-                                    │ DO: ensure container(projectId)
-                                    │   ├─ 命中：复用（resume from sleep）
-                                    │   └─ 未命中：CF Containers API 启动 agent-base
-                                    │
-                                    │ DO ──HTTP POST /plan──▶ Container
-                                    │            { cmd: 'plan', topic, skills }
-                                    │
-                                    │            Container 内 Pi agent
-                                    │            ├─ 加载 Skill Markdown
-                                    │            ├─ Pi.subscribe()
-                                    │            └─ Claude 4.5 Sonnet
-                                    │
-                                    │ Container ──SSE──▶ DO
-                                    │   event: card
-                                    │   event: suggestion
-                                    │   event: done
-                                    │
-                                    │ DO ──Workers fetch──▶ Project Service
-                                    │   POST /internal/cards (落 ChangeLog + DB)
-                                    │
-Web ◀── SSE ─────────────────────── │
-   event: card | suggestion | done
+                                    │ load project + selected Skills
+                                    │ clear old cards + status=planning
+                                    │ ToolLoopAgent(Sonnet)
+                                    │   └─ create_card tool → cards + ChangeLog
+Web ◀── AI SDK UI Stream ────────── │
+Web ──GET /projects/:id───────────▶ 拉取最终 card snapshot
 ```
 
-### 7.2 9 图生成（Queue + DO fan-out · 不走 container）
+### 7.2 9 图生成（Queue fan-out）
 
 ```
-POST /gen-jobs ─▶ GenJob(queued) + 9 条 CF Queue 消息
+POST /projects/:id/gen-jobs ─▶ GenJob(running) + N 条 CF Queue 消息
                                        │
                   CF Queue (max_concurrency=3)
                                        │
@@ -453,29 +386,25 @@ POST /gen-jobs ─▶ GenJob(queued) + 9 条 CF Queue 消息
                                   R2 上传 + CardImage 落库
                                        │
                                        ▼
-                                GenJob DO ◀── 完成通知
+                                maybeMarkJobDone
+                                       ▲
                                        │
-                                       ▼
-                                SSE: card_image_done (per card)
+Web ◀──────── GET /gen-jobs/:id/status 轮询
+Web ◀──────── GET /images/card-images/...png 读取 R2 图片
 ```
 
 ### 7.3 ⌘K 改写
 
 ```
 Web ──POST /cards/:id/edit──▶ Worker
-                                    │ borrow container from pool
-                                    │ HTTP/SSE: { cmd: 'edit', ... }
-                                    │
-                                    ◀── token stream（首字符 < 1.2s）
-                                    │ tool_call: propose_edit(field, newValue, rationale)
-                                    ◀── event: diff
+                                    │ read card + neighbors
+                                    │ ToolLoopAgent(Haiku)
+                                    │   └─ propose_edit tool（不落库）
+Web ◀── AI SDK UI Stream ────────── │
 Web ──user confirm──▶ PATCH /cards/:id
                               │
                               ▼
                           ChangeLog + 更新 cards
-                              │
-                              ▼
-                          container return pool
 ```
 
 ### 7.4 撤回
@@ -491,48 +420,28 @@ POST /changes/:id/undo
 
 ## 8. M1 实施分阶段
 
-### 阶段 0 · Docker 本地 spike（**1 周，先行**）
+### 阶段 1 · P0 单机贯通
 
-**目的**：把 Pi agent + Anthropic + 自定义 tools 这条链路用 Docker 跑通。
+- `apps/api` 用 `wrangler dev` 跑完整 Workers binding；`design` 用 Vite 跑 Studio
+- Neon dev DB；R2 / Queue 用 wrangler binding
+- 实现并验收：Project / Skills / Plan / Image Queue / R2 图片代理 / Export
+- 整条链路：建项目 → Plan 流式 → 拉取 cards → 9 图生成 → 看图 → 导出 ZIP
 
-- `npm i @mariozechner/pi-coding-agent`
-- 写 `sandbox/agent-base/`：
-  - `Dockerfile`
-  - `agent-server.ts`：监听 HTTP POST，把 Pi `subscribe()` 转发成 SSE
-  - `tools/`：3-4 个最小 tool（`create_card` 写到本地 JSON / `propose_suggestion` log）
-- `docker build -t agent-base .` → `docker run -p 7000:7000 agent-base`
-- 用 `curl -N` 或 `host-driver.ts`：POST `/plan` 发 `{cmd:'plan', topic, skills}`、打印 SSE 事件流
-- 跑通最小 demo：输入"周末 200 块在胡同吃到撑" → 流式生成 3 张卡片 + 1 条 suggestion
-
-**必过 checklist**：
-
-- [ ] Docker 容器能装 `@mariozechner/pi-coding-agent` 并启动
-- [ ] Container 出站能调通 Anthropic API
-- [ ] HTTP/SSE 端口暴露、host 能连
-- [ ] Pi 流式事件完整跨 SSE，无丢字
-- [ ] Pi 自定义 tool 能被 agent 调用且返回值正常
-- [ ] Pi sessions 持久化（用自定义 ResourceLoader 写到容器卷 / 后期切到 Neon+R2）
-
-**产出**：`sandbox/agent-base/` 可运行 Docker 镜像 + `spike-report.md` 列出已验证 / 风险点。
-
-### 阶段 1 · 单机贯通（2 周）
-
-- `apps/api`（Hono）跑在本机 `wrangler dev`；`apps/web` `vite dev`
-- AgentSession DO 通过环境变量切 `localhost:7000` 直连本机 Docker container
-- Neon dev DB；R2 用 wrangler 的 R2 模拟
-- 实现：Project / Plan / Skills（M1 三个内置）/ Image / ChangeLog
-- 整条链路：建项目 → Plan 流式 → 9 图生成 → 看图 → 导出 ZIP
-
-### 阶段 2 · ⌘K + Suggestion + 撤回（1.5 周）
+### 阶段 2 · 编辑器闭环
 
 - 实现 5.5 / 5.6 / 5.8
 - 完整覆盖 PRD § 10 编辑器 + § 12 Agent 行为规范
 
-### 阶段 3 · 部署到 Cloudflare（1.5 周）
+### 阶段 3 · 产品前端
 
-- `apps/api` → Workers；`apps/web` → Pages
-- `agent-base` 镜像 push 到 Cloudflare Container Registry
-- AgentSession DO 切到 CF Containers API 启动 container
+- 将 `design/` 拆成默认 Studio 应用 + 设计画板模式
+- 用真实 API 契约重做 Entry / Plan / Skills / Image / Editor 页面
+- 补齐 loading、error、empty、version conflict、job retry 等状态
+
+### 阶段 4 · 部署到 Cloudflare
+
+- `apps/api` → Workers；`design` → Pages
+- 配置 Neon / R2 / Queue / AIHubMix secret
 - 内测灰度 + 监控搭建（Cloudflare Analytics + 自建 dashboard）
 
 **总计**：约 6 周
@@ -547,15 +456,14 @@ POST /changes/:id/undo
 |---|---|
 | § 06 P0 选平台 → 参数自动调整（12 组合） | 前端 table-driven 单测 |
 | § 06 P0 URL 抓取成功率 ≥ 85% | 50 条 fixture URL 数据集 + CI 跑 |
-| § 07 P0 拖拽重排后 Agent 3s 内回写 | e2e 计时断言（miniflare 本地 + Docker container） |
+| § 07 P0 拖拽重排后 Agent 3s 内回写 | e2e 计时断言（wrangler dev + suggestion-reflect queue） |
 | § 07 P0 撤回 100% 可逆 | 每种 Agent 动作单测 + ChangeLog 完整性测试 |
 | § 09 P0 9 图主体一致 ≥ 4/5（盲评） | 内测人评 + 评分 dashboard |
 | ~~§ 09 P0 中文 OCR ≥ 92%~~ | **改：每周抽 50 张图人工评分，准确率 ≥ 90%**（PRD 同步更新中） |
 | § 09 P0 单图重生不影响其他 | 缓存命中单测 + e2e |
 | § 10 P0 ⌘K 首字符 < 1.2s | p50/p95 上报 → Cloudflare Analytics |
 | § 10 P0 Agent 建议采纳率 ≥ 30% | 埋点 + 周报 |
-| **新增** container 冷启 < 2s（CF Containers resume） | benchmark 脚本 |
-| **新增** Pi 流式事件跨 SSE 0 丢字 | 阶段 0 spike 必过 |
+| **新增** AI SDK UI Stream 能被前端消费 | mocked e2e + P0 Console 真实 API runbook |
 | **新增** 单图生成 p95 < 6min（gpt-image-2） | Queue consumer 实测打点；超时即记 partial |
 | **新增** 整组 9 图生成 p95 < 15min | GenJob DO 完成时间打点 |
 | **MVP-2** Image pipeline 正确性 | mocked 单测覆盖 producer + consumer 全路径（5 cases）；opt-in 1-image 真实 API 测试（`RUN_REAL_IMAGE_TEST=1`，约 $0.16/run） |
@@ -613,28 +521,22 @@ POST /changes/:id/undo
 ```
 VCard/
 ├── apps/
-│   ├── web/                # 前端 → Cloudflare Pages
 │   └── api/                # Hono on Workers (wrangler.toml)
 │       ├── src/
-│       │   ├── services/   # project / image / export / changelog
-│       │   ├── proxies/    # plan / edit / suggestion 三个 container proxy
-│       │   ├── do/         # AgentSession DO / GenJob DO
+│       │   ├── agent/      # Plan / Edit / Suggestion ToolLoopAgent
+│       │   ├── image/      # gpt-image-2 prompt + R2 store
+│       │   ├── do/         # M2+ deferred DO skeletons / GenJob fan-out placeholder
 │       │   └── queues/     # Queue consumers
 ├── sandbox/
-│   ├── agent-base/         # 同时给 Docker 本地 + CF Containers 用
-│   │   ├── Dockerfile
-│   │   ├── agent-server.ts # HTTP/SSE 服务，Pi 适配层
-│   │   └── tools/          # 自定义 tools
-│   └── host-driver/        # 本机 spike 脚本
+│   ├── agent-base/         # 历史 sandbox spike，M1 不使用
+│   └── bench/              # 冷启动 / 延迟 benchmark
 ├── packages/
 │   ├── shared-types/       # Project / Card / Skill 等 TS 接口
-│   ├── ai-prompts/         # Skill Markdown（M1 三个）+ 系统 prompt 模板
-│   └── ui/                 # Visual System 组件库
-├── design/                 # 现有 wireframe（保留只读）
+├── design/                 # Studio 前端 + 设计画板
 ├── docs/
 │   └── tech-design.md      # 本文件
-├── pnpm-workspace.yaml
-└── wrangler.toml
+├── package.json
+└── package-lock.json
 ```
 
 ---
@@ -644,7 +546,6 @@ VCard/
 - **PRD § 09 文字烧入校验**：原 "OCR ≥ 92%" 改为"人评抽样 ≥ 90%"，需 PRD 文件同步更新
 - **M1 内置 3 个 Skill 的 prompt 文案**：需运营 / 文案合作给定式
 - **用户体系**：Cloudflare Access / Clerk / 自建 magic link 三选一
-- **CF Containers 计费 / 配额 / GA 状态**：阶段 3 启动前调研对齐
 - **直发 OAuth 白名单**（M3 议题）：小红书 / 公众号开放接口需提前申请
 
 ---
@@ -657,4 +558,5 @@ VCard/
 | 2026-05-04 | § 5.4 加 gpt-image-2 实测延迟 228s/图 + 12min 整组 + 6min 超时；§ 9 增加单图/整组延迟验收线 | AIHubMix 实测 |
 | 2026-05-04 | **§ 0.1 架构修订**：放弃 CF Containers + Pi SDK，改用 Workers + Vercel AI SDK `ToolLoopAgent`；§3 架构图前置 deferred 横幅；§4 整段 deferred；§5.2/5.3/5.5/5.6 流程重写；§10 风险表汰换 6 行 | MVP-1 落地 + 风险评估 |
 | 2026-05-04 | **MVP-2 image pipeline**：§5.4 重写为 producer + consumer 实装；新增 §9 验收行（mocked + opt-in real-API 测试策略）；R2 key 约定 `card-images/{genJobId}/{cardId}-v{n}.png`；客户端轮询 `/gen-jobs/:id/status`，SSE 推送延后 | MVP-2 落地 |
+| 2026-05-04 | 清理 M1 主线：移除正文中的容器流程，补充 `/images/*` R2 代理与前端 P0 轮询契约 | 前端闭环对齐 |
 | 2026-05-04 | **MVP-3+4+5 三件套**：§5.5 Edit 实装（propose_edit 不落库）；§5.3 Skills 叠加 prompt 实装（buildPlanInstructions 拼接）；§5.6 Suggestion 异步 reflect 实装（reflect agent 在 suggestion-reflect Queue 分支运行）；§9 增加 3 行 MVP-3/4/5 验收 | MVP-3 + MVP-4 + MVP-5 落地 |

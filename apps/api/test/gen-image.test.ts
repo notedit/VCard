@@ -45,12 +45,12 @@ function fakeBucket() {
   return { bucket, calls };
 }
 
-function fakeImageClient(): { client: ImageClient; calls: Array<{ model: string; prompt: string }> } {
-  const calls: Array<{ model: string; prompt: string }> = [];
+function fakeImageClient(): { client: ImageClient; calls: Array<{ model: string; prompt: string; size?: string }> } {
+  const calls: Array<{ model: string; prompt: string; size?: string }> = [];
   const client: ImageClient = {
     images: {
       async generate(args) {
-        calls.push({ model: args.model, prompt: args.prompt });
+        calls.push({ model: args.model, prompt: args.prompt, size: args.size });
         return { data: [{ b64_json: FAKE_B64 }] };
       },
     },
@@ -158,6 +158,53 @@ describe('POST /projects/:id/gen-jobs producer', () => {
     expect(q.sent).toHaveLength(2);
   });
 
+  it('can enqueue only selected cardIds for cheap local smoke tests', async () => {
+    const { project, cards: seeded } = await seedProjectWithCards('single image test', 3);
+    const q = fakeQueue();
+
+    const res = await app.request(
+      `/projects/${project.id}/gen-jobs`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          mainSubject: { description: 'a teacup', refImages: [], locks: [] },
+          artStyle: '真实摄影',
+          textLayout: 'top',
+          cardIds: [seeded[1].id],
+        }),
+      },
+      { DATABASE_URL, GEN_IMAGE_QUEUE: q.queue },
+    );
+
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { queued: number };
+    expect(body.queued).toBe(1);
+    expect(q.sent).toHaveLength(1);
+    expect((q.sent[0].body as { cardId: string }).cardId).toBe(seeded[1].id);
+  });
+
+  it('rejects cardIds outside the project', async () => {
+    const { project } = await seedProjectWithCards('bad card id', 1);
+    const q = fakeQueue();
+
+    const res = await app.request(
+      `/projects/${project.id}/gen-jobs`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          mainSubject: { description: 'a teacup', refImages: [], locks: [] },
+          artStyle: '真实摄影',
+          textLayout: 'top',
+          cardIds: ['00000000-0000-4000-8000-000000000999'],
+        }),
+      },
+      { DATABASE_URL, GEN_IMAGE_QUEUE: q.queue },
+    );
+
+    expect(res.status).toBe(400);
+    expect(q.sent).toHaveLength(0);
+  });
+
   it('returns 409 if project has no cards', async () => {
     const [project] = await db.insert(projects).values({ topic: 'no cards', userId: 'demo-user' }).returning();
     const q = fakeQueue();
@@ -207,10 +254,11 @@ describe('processGenImageMessage consumer (1 message at a time)', () => {
     expect(r2.calls[0].key).toBe(`card-images/${job.id}/${seeded[0].id}-v1.png`);
     expect(r2.calls[0].contentType).toBe('image/png');
     expect(ai.calls[0].model).toBe('gpt-image-2');
+    expect(ai.calls[0].size).toBe('1024x1536');
     expect(ai.calls[0].prompt).toContain('hutong food');
     expect(ai.calls[0].prompt).toContain('a teacup');
 
-    // After 1 of 2 cards: job still running
+    // Full-project jobs stay running until every queued card lands.
     let jobRow = await db.query.genJobs.findFirst({ where: eq(genJobs.id, job.id) });
     expect(jobRow?.status).toBe('running');
 
@@ -245,6 +293,36 @@ describe('processGenImageMessage consumer (1 message at a time)', () => {
       .where(eq(changeLogs.projectId, project.id));
     const imageLogs = logs.filter((l) => l.target === 'image' && l.action === 'create_card_image');
     expect(imageLogs).toHaveLength(2);
+  });
+
+  it('marks selected-card jobs done when their queued card lands', async () => {
+    const { project, cards: seeded } = await seedProjectWithCards('single card job', 3);
+    const [job] = await db
+      .insert(genJobs)
+      .values({
+        projectId: project.id,
+        status: 'running',
+        mainSubject: {
+          description: 'x',
+          refImages: [],
+          locks: [],
+          queuedCardIds: [seeded[1].id],
+        } as { description: string; refImages: string[]; locks: []; queuedCardIds: string[] },
+        artStyle: '',
+        textLayout: 'top',
+      })
+      .returning();
+    const r2 = fakeBucket();
+    const ai = fakeImageClient();
+
+    await processGenImageMessage(
+      { cardId: seeded[1].id, genJobId: job.id, projectId: project.id },
+      { db, client: ai.client, bucket: r2.bucket },
+    );
+
+    const jobRow = await db.query.genJobs.findFirst({ where: eq(genJobs.id, job.id) });
+    expect(jobRow?.status).toBe('done');
+    expect(jobRow?.completedAt).toBeTruthy();
   });
 
   it('is idempotent on retry: second processGenImageMessage call no-ops the row insert and ChangeLog', async () => {
@@ -330,6 +408,37 @@ describe('processGenImageMessage consumer (1 message at a time)', () => {
     ).rejects.toThrow(/card not found/);
     expect(r2.calls).toHaveLength(0);
     expect(ai.calls).toHaveLength(0);
+  });
+});
+
+describe('GET /images/* R2 proxy', () => {
+  it('serves card image keys from R2 with immutable cache headers', async () => {
+    const key = 'card-images/job-1/card-1-v1.png';
+    const bucket = {
+      async get(requestedKey: string) {
+        if (requestedKey !== key) return null;
+        return {
+          body: new Uint8Array([1, 2, 3]),
+          httpEtag: '"etag-1"',
+          writeHttpMetadata(headers: Headers) {
+            headers.set('content-type', 'image/png');
+          },
+        };
+      },
+    } as unknown as R2Bucket;
+
+    const res = await app.request(`/images/${key}`, {}, { DATABASE_URL, IMAGES: bucket });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+    expect(res.headers.get('cache-control')).toContain('immutable');
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  it('rejects keys outside card-images', async () => {
+    const bucket = { async get() { return null; } } as unknown as R2Bucket;
+    const res = await app.request('/images/private/foo.png', {}, { DATABASE_URL, IMAGES: bucket });
+    expect(res.status).toBe(400);
   });
 });
 

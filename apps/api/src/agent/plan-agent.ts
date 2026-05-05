@@ -2,6 +2,7 @@ import { ToolLoopAgent, stepCountIs, type LanguageModel } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createCardTool, type CreateCardCtx } from './tools/create-card.js';
 import { VOICE_TONE_RULES } from './voice-tone.js';
+import { AIHUBMIX_ANTHROPIC_BASE_URL } from './model-config.js';
 import type { SkillRow } from '../db/schema.js';
 
 const BASE_SYSTEM_PROMPT = `你是一名小红书内容编辑。
@@ -80,7 +81,7 @@ export function buildPlanAgent(args: BuildPlanAgentArgs) {
 export function buildPlanModel(env: { AIHUBMIX_API_KEY: string }): LanguageModel {
   const anthropic = createAnthropic({
     apiKey: env.AIHUBMIX_API_KEY,
-    baseURL: 'https://aihubmix.com',
+    baseURL: AIHUBMIX_ANTHROPIC_BASE_URL,
   });
   return anthropic(PLAN_MODEL_ID);
 }

@@ -5,7 +5,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import { createAgentUIStreamResponse, type LanguageModel } from 'ai';
 import type { ChangeActor, ChangeTarget } from '@vcard/shared-types';
 import { createDb, type Db } from './db/client.js';
-import { cardImages, cards, changeLogs, genJobs, projects, skills } from './db/schema.js';
+import { cardImages, cards, changeLogs, genJobs, projects, skills, suggestions } from './db/schema.js';
 import type { CardRow, SkillInsert } from './db/schema.js';
 import {
   buildInitialPlanMessages,
@@ -58,6 +58,7 @@ const createGenJobSchema = z.object({
   mainSubject: mainSubjectSchema,
   artStyle: z.string().default('真实摄影'),
   textLayout: z.enum(['top', 'calligraphy', 'fullscreen', 'caption']).default('top'),
+  cardIds: z.array(z.string().uuid()).min(1).max(9).optional(),
 });
 
 const patchCardSchema = z.object({
@@ -286,11 +287,18 @@ app.post('/projects/:id/gen-jobs', async (c) => {
   const project = await db.query.projects.findFirst({ where: eq(projects.id, projectId) });
   if (!project) return c.json({ error: 'not found' }, 404);
 
-  const projectCards = await db
+  const allProjectCards = await db
     .select()
     .from(cards)
     .where(eq(cards.projectId, projectId))
     .orderBy(asc(cards.index));
+  const requestedCardIds = body.cardIds ? new Set(body.cardIds) : null;
+  const projectCards = requestedCardIds
+    ? allProjectCards.filter((card) => requestedCardIds.has(card.id))
+    : allProjectCards;
+  if (requestedCardIds && projectCards.length !== requestedCardIds.size) {
+    return c.json({ error: 'unknown_card_ids' }, 400);
+  }
   if (projectCards.length === 0) return c.json({ error: 'no_cards' }, 409);
 
   // Idempotency: refuse if there's already a running job for this project.
@@ -310,7 +318,10 @@ app.post('/projects/:id/gen-jobs', async (c) => {
     .values({
       projectId,
       status: 'running',
-      mainSubject: body.mainSubject,
+      mainSubject: {
+        ...body.mainSubject,
+        queuedCardIds: projectCards.map((card) => card.id),
+      } as typeof body.mainSubject,
       artStyle: body.artStyle,
       textLayout: body.textLayout,
     })
@@ -363,6 +374,64 @@ app.get('/gen-jobs/:id/status', async (c) => {
     failed: [],
     images,
   });
+});
+
+app.get('/projects/:id/suggestions', async (c) => {
+  const db = c.var.db;
+  const projectId = c.req.param('id');
+  const project = await db.query.projects.findFirst({ where: eq(projects.id, projectId) });
+  if (!project) return c.json({ error: 'not found' }, 404);
+  const rows = await db
+    .select()
+    .from(suggestions)
+    .where(eq(suggestions.projectId, projectId))
+    .orderBy(asc(suggestions.createdAt));
+  return c.json({ suggestions: rows });
+});
+
+app.post('/suggestions/:id/accept', async (c) => {
+  const db = c.var.db;
+  const id = c.req.param('id');
+  const [updated] = await db
+    .update(suggestions)
+    .set({ status: 'accepted' })
+    .where(eq(suggestions.id, id))
+    .returning();
+  if (!updated) return c.json({ error: 'not found' }, 404);
+  return c.json(updated);
+});
+
+app.post('/suggestions/:id/ignore', async (c) => {
+  const db = c.var.db;
+  const id = c.req.param('id');
+  const [updated] = await db
+    .update(suggestions)
+    .set({ status: 'ignored' })
+    .where(eq(suggestions.id, id))
+    .returning();
+  if (!updated) return c.json({ error: 'not found' }, 404);
+  return c.json(updated);
+});
+
+app.get('/images/*', async (c) => {
+  const bucket = c.env?.IMAGES;
+  if (!bucket) return c.json({ error: 'IMAGES R2 binding not configured' }, 500);
+
+  const key = decodeURIComponent(new URL(c.req.url).pathname.replace(/^\/images\/+/, ''));
+  if (!key || key.includes('..') || !key.startsWith('card-images/')) {
+    return c.json({ error: 'invalid_image_key' }, 400);
+  }
+
+  const object = await bucket.get(key);
+  if (!object) return c.json({ error: 'not found' }, 404);
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('etag', object.httpEtag);
+  headers.set('cache-control', 'public, max-age=31536000, immutable');
+  if (!headers.has('content-type')) headers.set('content-type', 'image/png');
+
+  return new Response(object.body, { headers });
 });
 
 app.post('/projects/:id/export', async (c) => {

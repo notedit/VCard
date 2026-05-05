@@ -1,6 +1,6 @@
 # VCard · 卡片 · 社媒 Studio
 
-AI native 的社媒卡片工作台。给主题 → 出爆款图文。
+AI native 的社媒卡片工作台。给主题 → 选 Skill → 生成信息卡片 → 轻编辑 → 导出。
 
 平台优先入口、Agent 推进的可对话 Plan、可叠加的 Skills 能力包、gpt-image-2 主体一致性 + 中文文字烧入。
 
@@ -13,9 +13,9 @@ AI native 的社媒卡片工作台。给主题 → 出爆款图文。
 
 ## 仓库结构
 
-```
+```text
 apps/api/          Hono on Cloudflare Workers — Plan / Edit / Suggestion agents + image queue consumer
-design/            React + Vite wireframes (低保真草图，中保真未启动)
+design/            React + Vite frontend prototype and Studio
 packages/          shared-types: 前后端共享类型
 docs/              tech-design, fixtures, m1-test-resources
 sandbox/agent-base/ pivot-pre spike, 已不参与 M1 (保留作为参考)
@@ -23,74 +23,59 @@ sandbox/agent-base/ pivot-pre spike, 已不参与 M1 (保留作为参考)
 
 ## 前置依赖
 
-- Node ≥ 20（见 `.nvmrc`）
-- npm ≥ 10
+- Node >= 20（见 `.nvmrc`）
+- npm >= 10
 - Neon Postgres 实例（或自建 Postgres + HTTP proxy）
 - AIHubMix 账号（统一 LLM 网关）
 
 ## 本地启动
 
-### 1. 装依赖
+安装依赖：
 
 ```bash
 npm ci
 ```
 
-### 2. 注入 secrets
-
-API key 统一从 `~/.secrets/common.env` 读取（**不要**写进仓库）：
+API key 统一从 `~/.secrets/common.env` 读取，不要写进仓库。完整本地预览使用 Wrangler 绑定：
 
 ```bash
-set -a && . ~/.secrets/common.env && set +a
+npm run dev:full
 ```
 
-需要的环境变量见 `apps/api/.dev.vars.example`。把它复制到 `apps/api/.dev.vars`（已 gitignore），从环境变量填入：
+`dev:full` 会先把 Worker 必需变量 `DATABASE_URL`、`AIHUBMIX_API_KEY` 同步到 `apps/api/.dev.vars`，再启动：
+
+- API: `http://localhost:8787`
+- 前端: `http://127.0.0.1:5173`
+
+分开调试时可以跑：
 
 ```bash
-cp apps/api/.dev.vars.example apps/api/.dev.vars
-# 然后用上面注入的环境变量填充各 key
+npm run dev:vars
+npm run dev:api
+npm run dev:studio
 ```
 
-### 3. 跑数据库迁移
+首次使用或数据库结构变化后先跑迁移：
 
 ```bash
 npm run -w @vcard/api db:migrate
 ```
 
-> 注：先 migrate，再起服。生产部署同样**先 migrate 再 deploy**。
-
-### 4. 起服务
-
-```bash
-# API（Workers / Hono）
-npm run -w @vcard/api dev
-
-# 前端 wireframe（独立）
-npm run -w design dev
-```
-
 ## 测试
 
 ```bash
-# 全 workspace
+npm run typecheck
 npm test
-
-# 仅 API（vitest + Neon test branch）
-npm run -w @vcard/api test
+npm run build
 ```
 
-测试用一个独立的 Neon test branch（CI 通过 `DATABASE_URL_TEST` secret 注入），TRUNCATE between cases，所以 `vitest.config.ts` 设了 `singleFork: true` 串行跑。
+测试用独立的 Neon test branch（CI 通过 `DATABASE_URL_TEST` secret 注入），会在用例间清表。`apps/api/vitest.config.ts` 关闭了文件并行，避免共享测试库互相 `TRUNCATE`。
 
 可选的真实 LLM / gpt-image-2 测试默认跳过，靠 env flag 启用：
 
 ```bash
 RUN_REAL_IMAGE_TEST=1 npm run -w @vcard/api test
-```
-
-## 类型检查
-
-```bash
-npm run typecheck   # 全 workspace
+RUN_REAL_ANTHROPIC_TEST=1 npm run -w @vcard/api test
 ```
 
 ## CI
@@ -102,9 +87,9 @@ npm run typecheck   # 全 workspace
 
 ## 部署
 
-> Workers + Cloudflare Queues + R2 + Durable Objects。
+Workers + Cloudflare Queues + R2 + Durable Objects。
 
 部署顺序：
 
-1. **先 migrate**：`npm run -w @vcard/api db:migrate`（指向生产 DATABASE_URL）
-2. **再 deploy**：`wrangler deploy`（在 `apps/api/`）
+1. 先 migrate：`npm run -w @vcard/api db:migrate`（指向生产 `DATABASE_URL`）
+2. 再 deploy：`wrangler deploy`（在 `apps/api/`）

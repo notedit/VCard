@@ -1,6 +1,7 @@
 import { ToolLoopAgent, stepCountIs, type LanguageModel } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import type { Db } from '../db/client.js';
+import { AIHUBMIX_ANTHROPIC_BASE_URL } from './model-config.js';
 import { proposeSuggestionTool } from './tools/propose-suggestion.js';
 import { readCardTool, readProjectTool } from './tools/read-context.js';
 import { VOICE_TONE_RULES } from './voice-tone.js';
@@ -65,7 +66,7 @@ export function buildSuggestionAgent(args: {
 export function buildSuggestionModel(env: { AIHUBMIX_API_KEY: string }): LanguageModel {
   const anthropic = createAnthropic({
     apiKey: env.AIHUBMIX_API_KEY,
-    baseURL: 'https://aihubmix.com',
+    baseURL: AIHUBMIX_ANTHROPIC_BASE_URL,
   });
   return anthropic(SUGGESTION_MODEL_ID);
 }

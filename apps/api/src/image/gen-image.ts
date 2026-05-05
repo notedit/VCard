@@ -17,6 +17,7 @@ export type ImageClient = {
 };
 
 export const IMAGE_MODEL = 'gpt-image-2';
+export const REDBOOK_IMAGE_SIZE = '1024x1536';
 
 export type GenImageContext = {
   card: CardRow;
@@ -64,7 +65,7 @@ export async function generateCardImage(
   const res = await client.images.generate({
     model: IMAGE_MODEL,
     prompt: fullPrompt,
-    size: '1024x1024',
+    size: REDBOOK_IMAGE_SIZE,
     n: 1,
   });
   const b64 = res.data?.[0]?.b64_json;

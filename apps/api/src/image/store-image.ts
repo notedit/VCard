@@ -36,7 +36,8 @@ export function buildR2Key(genJobId: string, cardId: string, version: number): s
  * only on first success to avoid duplicate audit entries.
  *
  * R2 url field stores the *r2 key* (e.g. `card-images/<job>/<card>-v1.png`),
- * not a full URL — the Worker proxy or CDN resolves it.
+ * not a full URL. The Worker exposes `/images/*`; frontend prepends
+ * `${API_BASE}/images/` when rendering.
  */
 export async function storeCardImage(input: StoreImageInput): Promise<CardImageRow> {
   const version = 1;

@@ -10,11 +10,14 @@ import { ScreenEditor } from './screens/ScreenEditor';
 import { ScreenPositioning } from './screens/ScreenPositioning';
 import { ScreenStyleGuide } from './screens/ScreenStyleGuide';
 import { ScreenP0Console } from './screens/ScreenP0Console';
+import { StudioApp } from './studio/StudioApp';
+import { SkillsPrototype } from './skills/SkillsPrototype';
 
 export default function App() {
   const [showAnnotations, setShowAnnotations] = useState(true);
   const [showPositioning, setShowPositioning] = useState(true);
   const [entryVariant, setEntryVariant] = useState<EntryVariant>('A');
+  const [mode, setMode] = useState<'skills' | 'studio' | 'boards'>('skills');
 
   useEffect(() => {
     document.body.dataset.annotations = showAnnotations ? 'on' : 'off';
@@ -28,19 +31,35 @@ export default function App() {
           <span style={{ fontSize: 16, fontFamily: 'var(--font-hand)' }}>社媒 Studio</span>
         </div>
         <nav className="nav-list">
-          {showPositioning && <a href="#positioning">0 · 定位</a>}
-          <a href="#style">0.5 · 设计风格</a>
-          <a href="#entry">1 · 入口</a>
-          <a href="#p0">P0 · 跑通</a>
-          <a href="#plan">2 · Plan</a>
-          <a href="#skills">3 · Skills</a>
-          <a href="#image">4 · 视觉</a>
-          <a href="#editor">5 · 编辑器</a>
+          <button className={mode === 'skills' ? 'nav-button on' : 'nav-button'} onClick={() => setMode('skills')}>
+            Skills Feed
+          </button>
+          <button className={mode === 'studio' ? 'nav-button on' : 'nav-button'} onClick={() => setMode('studio')}>
+            API Studio
+          </button>
+          <button className={mode === 'boards' ? 'nav-button on' : 'nav-button'} onClick={() => setMode('boards')}>
+            设计画板
+          </button>
+          {mode === 'boards' && showPositioning && <a href="#positioning">0 · 定位</a>}
+          {mode === 'boards' && <a href="#style">0.5 · 设计风格</a>}
+          {mode === 'boards' && <a href="#entry">1 · 入口</a>}
+          {mode === 'boards' && <a href="#p0">P0 · 跑通</a>}
+          {mode === 'boards' && <a href="#plan">2 · Plan</a>}
+          {mode === 'boards' && <a href="#skills">3 · Skills</a>}
+          {mode === 'boards' && <a href="#image">4 · 视觉</a>}
+          {mode === 'boards' && <a href="#editor">5 · 编辑器</a>}
           <a className="prd-link" href="prd.html" target="_blank" rel="noreferrer">
-            📄 完整 PRD
+            完整 PRD
           </a>
         </nav>
       </header>
+
+      {mode === 'skills' ? (
+        <SkillsPrototype />
+      ) : mode === 'studio' ? (
+        <StudioApp />
+      ) : (
+        <>
 
       <section className="section">
         <div className="section-header">
@@ -103,6 +122,8 @@ export default function App() {
           />
         </TweakSection>
       </TweaksPanel>
+        </>
+      )}
     </div>
   );
 }

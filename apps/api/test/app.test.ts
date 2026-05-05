@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { app } from '../src/app.js';
 import { createDb } from '../src/db/client.js';
-import { cards } from '../src/db/schema.js';
+import { cards, suggestions } from '../src/db/schema.js';
 
 const DATABASE_URL = process.env.DATABASE_URL_TEST!;
 const db = createDb(DATABASE_URL);
@@ -85,6 +85,38 @@ describe('project and cards', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { cards: { index: number }[] };
     expect(body.cards.map((c) => c.index)).toEqual([0, 1, 2]);
+  });
+
+  it('lists and updates suggestion status', async () => {
+    const project = (await (
+      await app.request(
+        '/projects',
+        { method: 'POST', body: JSON.stringify({ topic: 'suggestion test' }) },
+        env,
+      )
+    ).json()) as { id: string };
+
+    const [suggestion] = await db
+      .insert(suggestions)
+      .values({
+        projectId: project.id,
+        type: 'structure',
+        message: '第 5 张信息密度偏高',
+        actionLabel: '拆成两张',
+        actionPayload: { kind: 'split_card' },
+      })
+      .returning();
+
+    const listRes = await app.request(`/projects/${project.id}/suggestions`, {}, env);
+    expect(listRes.status).toBe(200);
+    const listBody = (await listRes.json()) as { suggestions: Array<{ id: string; status: string }> };
+    expect(listBody.suggestions).toHaveLength(1);
+    expect(listBody.suggestions[0].status).toBe('pending');
+
+    const ignoreRes = await app.request(`/suggestions/${suggestion.id}/ignore`, { method: 'POST' }, env);
+    expect(ignoreRes.status).toBe(200);
+    const ignored = (await ignoreRes.json()) as { status: string };
+    expect(ignored.status).toBe('ignored');
   });
 
   // The previous "runs the P0 flow" mega-test was retired in MVP-1: it asserted

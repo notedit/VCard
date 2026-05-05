@@ -58,4 +58,5 @@ new_classes = ["AgentSession", "GenJob"]
 # === Notes ===
 # - `npm run dev` (tsx + @hono/node-server) does NOT exercise DOs — use it for
 #   endpoint iteration only. For DOs, use `npx wrangler dev`.
-# - DATABASE_URL must be in apps/api/.dev.vars (gitignored), copied from ~/.secrets/common.env.
+# - DATABASE_URL and AIHUBMIX_API_KEY must be in apps/api/.dev.vars (gitignored).
+#   `npm run dev:vars` copies only those keys from ~/.secrets/common.env.

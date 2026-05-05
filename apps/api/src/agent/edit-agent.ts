@@ -2,6 +2,7 @@ import { ToolLoopAgent, stepCountIs, type LanguageModel } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { proposeEditTool } from './tools/propose-edit.js';
 import { VOICE_TONE_RULES } from './voice-tone.js';
+import { AIHUBMIX_ANTHROPIC_BASE_URL } from './model-config.js';
 import type { CardRow, SkillRow } from '../db/schema.js';
 
 export const EDIT_MODEL_ID = 'claude-haiku-4-5';
@@ -91,7 +92,7 @@ export function buildEditAgent(args: BuildEditAgentArgs) {
 export function buildEditModel(env: { AIHUBMIX_API_KEY: string }): LanguageModel {
   const anthropic = createAnthropic({
     apiKey: env.AIHUBMIX_API_KEY,
-    baseURL: 'https://aihubmix.com',
+    baseURL: AIHUBMIX_ANTHROPIC_BASE_URL,
   });
   return anthropic(EDIT_MODEL_ID);
 }

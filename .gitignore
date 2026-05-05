@@ -29,6 +29,10 @@ coverage/
 .env
 .env.*
 !.env.example
+apps/api/.dev.vars
+
+# Cloudflare Wrangler local state
+**/.wrangler/
 
 # wrangler local dev
 .wrangler/

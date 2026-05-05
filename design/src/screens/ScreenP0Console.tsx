@@ -6,11 +6,28 @@ type Card = {
   role: string;
   title: string;
   body: string;
+  imageVersionId?: string | null;
 };
 
 type Skill = {
   id: string;
   name: string;
+};
+
+type ProjectSnapshot = {
+  project: { id: string; status: string };
+  cards: Card[];
+};
+
+type GenJobResponse = {
+  job: { id: string; status: string };
+  queued: number;
+};
+
+type GenJobStatus = {
+  job: { id: string; status: string };
+  done: number[];
+  images: Array<{ id: string; cardId: string; url: string; cardIndex: number }>;
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8787';
@@ -20,6 +37,7 @@ export function ScreenP0Console() {
   const [projectId, setProjectId] = useState('');
   const [skills, setSkills] = useState<Skill[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
+  const [images, setImages] = useState<GenJobStatus['images']>([]);
   const [jobStatus, setJobStatus] = useState('未开始');
   const [exportSize, setExportSize] = useState('');
   const [log, setLog] = useState<string[]>(['准备就绪：先启动 API，再跑 P0。']);
@@ -28,6 +46,7 @@ export function ScreenP0Console() {
   async function runP0() {
     setBusy(true);
     setCards([]);
+    setImages([]);
     setExportSize('');
     setJobStatus('运行中');
     setLog(['创建项目']);
@@ -56,24 +75,27 @@ export function ScreenP0Console() {
         body: JSON.stringify({ skillIds }),
       });
       if (!planRes.ok) throw new Error(`Plan failed: ${planRes.status}`);
-      const events = parseSse(await planRes.text());
-      const nextCards = events.filter((event) => event.event === 'card').map((event) => event.data as Card);
-      setCards(nextCards);
-      pushLog(`Plan 完成：${nextCards.length} 张卡`);
+      await planRes.text();
+      const snapshot = await request<ProjectSnapshot>(`/projects/${project.id}`);
+      setCards(snapshot.cards);
+      pushLog(`Plan 完成：${snapshot.cards.length} 张卡`);
 
-      const gen = await request<{ job: { id: string; status: string }; images: unknown[] }>(
-        `/projects/${project.id}/gen-jobs`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            mainSubject: { description: '胡同餐桌、自然光、真实烟火气', refImages: [], locks: ['lighting', 'props'] },
-            artStyle: '真实摄影',
-            textLayout: 'top',
-          }),
-        },
-      );
-      setJobStatus(`${gen.job.status} · ${gen.images.length}/9`);
-      pushLog(`图片记录完成：${gen.images.length}/9`);
+      const gen = await request<GenJobResponse>(`/projects/${project.id}/gen-jobs`, {
+        method: 'POST',
+        body: JSON.stringify({
+          mainSubject: { description: '胡同餐桌、自然光、真实烟火气', refImages: [], locks: ['lighting', 'props'] },
+          artStyle: '真实摄影',
+          textLayout: 'top',
+        }),
+      });
+      setJobStatus(`${gen.job.status} · queued ${gen.queued}`);
+      pushLog(`图片任务已入队：${gen.queued} 张`);
+
+      const finalStatus = await pollJob(gen.job.id, snapshot.cards.length, (status) => {
+        setImages(status.images);
+        setJobStatus(`${status.job.status} · ${status.images.length}/${snapshot.cards.length}`);
+      });
+      pushLog(`图片生成状态：${finalStatus.job.status} · ${finalStatus.images.length}/${snapshot.cards.length}`);
 
       const archive = await fetch(`${API_BASE}/projects/${project.id}/export`, { method: 'POST' });
       if (!archive.ok) throw new Error(`Export failed: ${archive.status}`);
@@ -131,13 +153,23 @@ export function ScreenP0Console() {
         {cards.length === 0 ? (
           <div className="placeholder">Plan 生成后，9 张卡会出现在这里</div>
         ) : (
-          cards.map((card) => (
+          cards.map((card) => {
+            const image = images.find((row) => row.cardId === card.id);
+            return (
             <article className="wf wf-tight p0-card" key={card.id}>
+              {image && (
+                <img
+                  className="p0-card-image"
+                  src={`${API_BASE}/images/${image.url}`}
+                  alt={`${card.index + 1} ${card.title}`}
+                />
+              )}
               <div className="mono muted">{String(card.index + 1).padStart(2, '0')} · {card.role}</div>
               <h3>{card.title}</h3>
               <p>{card.body}</p>
             </article>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -160,14 +192,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-function parseSse(text: string) {
-  return text
-    .trim()
-    .split('\n\n')
-    .filter(Boolean)
-    .map((chunk) => {
-      const event = chunk.match(/^event: (.+)$/m)?.[1] ?? 'message';
-      const data = chunk.match(/^data: (.+)$/m)?.[1];
-      return { event, data: data ? JSON.parse(data) : null };
-    });
+async function pollJob(
+  jobId: string,
+  expectedCount: number,
+  onTick: (status: GenJobStatus) => void,
+): Promise<GenJobStatus> {
+  let latest: GenJobStatus | null = null;
+  for (let attempt = 0; attempt < 180; attempt += 1) {
+    latest = await request<GenJobStatus>(`/gen-jobs/${jobId}/status`);
+    onTick(latest);
+    if (latest.job.status === 'done' || latest.images.length >= expectedCount) return latest;
+    if (latest.job.status === 'failed') return latest;
+    await sleep(5000);
+  }
+  if (!latest) throw new Error('Job status unavailable');
+  return latest;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

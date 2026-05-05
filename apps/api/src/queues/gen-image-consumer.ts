@@ -69,27 +69,43 @@ export async function processGenImageMessage(
 }
 
 /**
- * When every card in the project has an image for this job, atomically flip
- * gen_jobs.status from 'running' to 'done'. Uses a conditional UPDATE so two
- * concurrent consumers reaching `allDone=true` race safely — only one row
- * actually transitions ('running' → 'done'); the other sees 0 rows updated.
+ * When every queued card has an image for this job, atomically flip
+ * gen_jobs.status from 'running' to 'done'. Full-project jobs store every
+ * project card id as the target set; selected-card smoke jobs store only the
+ * requested ids. Older rows without queuedCardIds fall back to all project
+ * cards.
  */
 export async function maybeMarkJobDone(db: Db, genJobId: string, projectId: string): Promise<void> {
-  const projectCards = await db.select({ id: cards.id }).from(cards).where(eq(cards.projectId, projectId));
-  if (projectCards.length === 0) return;
+  const job = await db.query.genJobs.findFirst({ where: eq(genJobs.id, genJobId) });
+  if (!job || job.status !== 'running') return;
+
+  const queuedCardIds = readQueuedCardIds(job.mainSubject);
+  const targetCardIds =
+    queuedCardIds.length > 0
+      ? queuedCardIds
+      : (await db.select({ id: cards.id }).from(cards).where(eq(cards.projectId, projectId))).map(
+          (row) => row.id,
+        );
+  if (targetCardIds.length === 0) return;
 
   const generated = await db
     .select({ cardId: cardImages.cardId })
     .from(cardImages)
     .where(eq(cardImages.genJobId, genJobId));
   const doneCardIds = new Set(generated.map((row) => row.cardId));
-  const allDone = projectCards.every((row) => doneCardIds.has(row.id));
+  const allDone = targetCardIds.every((id) => doneCardIds.has(id));
   if (!allDone) return;
 
   await db
     .update(genJobs)
     .set({ status: 'done', completedAt: new Date() })
     .where(and(eq(genJobs.id, genJobId), eq(genJobs.status, 'running')));
+}
+
+function readQueuedCardIds(mainSubject: unknown): string[] {
+  if (!mainSubject || typeof mainSubject !== 'object') return [];
+  const value = (mainSubject as { queuedCardIds?: unknown }).queuedCardIds;
+  return Array.isArray(value) && value.every((id) => typeof id === 'string') ? value : [];
 }
 
 /**

@@ -278,6 +278,36 @@ describe('processGenImageMessage consumer (1 message at a time)', () => {
     expect(imageLogs.filter((l) => l.action === 'create_card_image')).toHaveLength(1);
   });
 
+  it('cards.imageVersionId becomes NULL when the referenced cardImage is deleted (FK ON DELETE SET NULL)', async () => {
+    const { project, cards: seeded } = await seedProjectWithCards('fk topic', 1);
+    const [job] = await db
+      .insert(genJobs)
+      .values({
+        projectId: project.id,
+        status: 'running',
+        mainSubject: { description: 'x', refImages: [], locks: [] },
+        artStyle: '',
+        textLayout: 'top',
+      })
+      .returning();
+    const r2 = fakeBucket();
+    const ai = fakeImageClient();
+    await processGenImageMessage(
+      { cardId: seeded[0].id, genJobId: job.id, projectId: project.id },
+      { db, client: ai.client, bucket: r2.bucket },
+    );
+
+    // After processing, card has an imageVersionId pointing at the cardImage row.
+    const before = await db.query.cards.findFirst({ where: eq(cards.id, seeded[0].id) });
+    expect(before?.imageVersionId).toBeTruthy();
+
+    // Delete the cardImage row directly. FK should null out cards.imageVersionId.
+    await db.delete(cardImages).where(eq(cardImages.id, before!.imageVersionId!));
+
+    const after = await db.query.cards.findFirst({ where: eq(cards.id, seeded[0].id) });
+    expect(after?.imageVersionId).toBeNull();
+  });
+
   it('throws on missing card so the queue can retry', async () => {
     const { project } = await seedProjectWithCards('topic', 1);
     const [job] = await db

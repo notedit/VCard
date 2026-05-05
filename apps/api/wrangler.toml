@@ -39,6 +39,7 @@ queue = "suggestion-reflect"
 max_batch_size = 1
 max_concurrency = 5
 max_retries = 1
+dead_letter_queue = "suggestion-reflect-dlq"
 
 # === Durable Objects ===
 # Skeleton classes; logic landing in 阶段 1 (container/queue plumbing).

@@ -15,6 +15,13 @@
       "when": 1777904840019,
       "tag": "0001_funny_blink",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777967719404,
+      "tag": "0002_loose_raza",
+      "breakpoints": true
     }
   ]
 }

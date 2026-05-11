@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "dev:wrangler": "wrangler dev --port 8787",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "skills:build": "node scripts/build-skills.mjs",
+    "dev": "npm run skills:build && tsx watch src/index.ts",
+    "dev:wrangler": "npm run skills:build && wrangler dev --port 8787",
+    "typecheck": "npm run skills:build && tsc --noEmit",
+    "test": "npm run skills:build && vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"

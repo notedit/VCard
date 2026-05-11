@@ -1,0 +1,4 @@
+interface:
+  display_name: "Image Card Generator"
+  short_description: "Generate GPT-image-led social card sets"
+  default_prompt: "Use $image-card-generator to create a GPT-image-led social image card set from this brief."

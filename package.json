@@ -2,7 +2,6 @@
   "name": "vcard-m1",
   "private": true,
   "workspaces": [
-    "design",
     "apps/*",
     "packages/*",
     "sandbox/*"
@@ -15,7 +14,8 @@
     "build": "npm run -ws --if-present build",
     "dev:api": "npm run dev:wrangler --workspace @vcard/api",
     "dev:full": "node scripts/dev-full.mjs",
-    "dev:studio": "VITE_API_BASE=http://localhost:8787 npm run dev --workspace vcard-design -- --host 127.0.0.1",
+    "dev:studio": "VITE_API_BASE=http://localhost:8787 npm run dev --workspace @vcard/web -- --host 127.0.0.1",
+    "dev:web": "npm run dev:studio",
     "dev:vars": "node scripts/sync-dev-vars.mjs",
     "typecheck": "npm run -ws typecheck",
     "test": "npm run -ws test"

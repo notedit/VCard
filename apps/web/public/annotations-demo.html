@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Annotation Skill · 视觉注意力控制系统</title>
+<link rel="icon" type="image/svg+xml" href="/vcard-icon.svg" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Caveat:wght@400;700&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --ink-1000:#0a0a0b;--ink-900:#141416;--ink-800:#222226;--ink-700:#34343a;
+  --ink-600:#50505a;--ink-500:#74747e;--ink-400:#a0a0aa;--ink-300:#c7c7cf;
+  --ink-200:#e2e2e7;--ink-150:#eeeeF2;--ink-100:#f6f6f8;--ink-50:#fbfbfc;
+  --paper:#fffffc;--accent:#3d3dff;--accent-soft:#ececff;
+  --warn:#d92d20;--ok:#079455;--mark:#fff37a;
+  --font-ui:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+  --font-display:'Source Serif 4',Georgia,serif;
+  --font-mono:'JetBrains Mono',ui-monospace,monospace;
+  --font-hand:'Caveat',cursive;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--paper);color:var(--ink-1000);font-family:var(--font-ui);-webkit-font-smoothing:antialiased}
+a{color:inherit}
+
+/* ==== layout ==== */
+.page{max-width:1240px;margin:0 auto;padding:64px clamp(20px,4vw,48px) 96px}
+.hero{margin:0 0 56px}
+.hero-brand{display:inline-block;margin:0 0 28px}
+.hero-brand img{display:block;height:34px;width:auto}
+.hero .kicker{margin:0 0 16px;font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-500)}
+.hero h1{margin:0 0 18px;font-family:var(--font-display);font-size:clamp(40px,5.5vw,72px);font-weight:700;line-height:1.04;letter-spacing:-.02em}
+.hero h1 em{font-style:normal;color:var(--accent)}
+.hero p{max-width:60ch;margin:0;color:var(--ink-600);font-size:clamp(15px,1.4vw,17px);line-height:1.6}
+.hero .pillrow{display:flex;flex-wrap:wrap;gap:8px;margin:24px 0 0}
+.hero .pillrow span{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--ink-200);border-radius:999px;background:var(--paper);color:var(--ink-700);font-size:12px}
+.hero .pillrow span::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--accent)}
+
+.cat{margin:0 0 36px}
+.cat-head{display:flex;align-items:baseline;gap:18px;margin:64px 0 28px;padding:0 0 16px;border-bottom:1px solid var(--ink-200)}
+.cat-head .num{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--accent)}
+.cat-head h2{margin:0;font-family:var(--font-display);font-size:clamp(26px,3.2vw,38px);font-weight:700;line-height:1;letter-spacing:-.01em}
+.cat-head .lead{margin:0 0 0 auto;color:var(--ink-500);font-size:13px}
+
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+@media (max-width:880px){.grid{grid-template-columns:1fr}}
+
+/* ==== demo card ==== */
+.demo{display:flex;flex-direction:column;border:1px solid var(--ink-200);border-radius:12px;background:var(--paper);overflow:hidden}
+.demo-head{display:flex;align-items:flex-start;gap:14px;padding:20px 22px 0}
+.demo-head .demo-num{flex:none;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--ink-200);border-radius:7px;font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--ink-700)}
+.demo-head h3{margin:0 0 4px;font-family:var(--font-display);font-size:20px;font-weight:700;line-height:1.2}
+.demo-head .use{margin:0;color:var(--ink-500);font-size:12.5px;line-height:1.4}
+.stage{margin:18px 22px;height:240px;border:1px dashed var(--ink-200);border-radius:10px;background:var(--ink-50);position:relative;overflow:hidden}
+.demo-foot{display:flex;align-items:flex-start;gap:12px;padding:0 22px 18px;color:var(--ink-700);font-size:13px;line-height:1.55}
+.demo-foot::before{content:'';flex:none;width:14px;height:1px;margin-top:10px;background:var(--accent)}
+details.cfg{margin:0 22px 16px;border-top:1px solid var(--ink-200);padding-top:12px}
+details.cfg summary{cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--ink-500);letter-spacing:.04em;text-transform:uppercase}
+details.cfg pre{margin:10px 0 0;padding:12px;background:var(--ink-100);border-radius:6px;font-family:var(--font-mono);font-size:11.5px;color:var(--ink-800);overflow:auto;line-height:1.5}
+
+/* ==================================================================== */
+/*  effect 1 — step annotation                                          */
+/* ==================================================================== */
+.stage-step{display:flex;align-items:center;justify-content:center;gap:10px;padding:22px}
+.step{flex:1;max-width:120px;padding:14px 12px;border:1px solid var(--ink-300);border-radius:8px;background:var(--paper);text-align:center;font-size:12px;font-weight:500;line-height:1.4;color:var(--ink-800);position:relative;opacity:0;transform:translateY(6px)}
+.step .n{display:block;margin:0 auto 6px;width:22px;height:22px;border-radius:50%;background:var(--ink-1000);color:var(--paper);font-family:var(--font-mono);font-size:11px;font-weight:700;line-height:22px}
+.step::after{content:'';position:absolute;inset:-6px;border:2px solid var(--accent);border-radius:10px;opacity:0;pointer-events:none}
+.step.s1{animation:step-in 8s infinite,step-ring 8s infinite}
+.step.s2{animation:step-in 8s infinite 1.5s,step-ring 8s infinite 1.5s}
+.step.s3{animation:step-in 8s infinite 3s,step-ring 8s infinite 3s,step-zoom 8s infinite 3s}
+.arrow{flex:none;width:24px;height:1px;background:var(--ink-300);position:relative;opacity:0}
+.arrow::after{content:'';position:absolute;right:-1px;top:-3px;width:0;height:0;border-left:6px solid var(--ink-700);border-top:3px solid transparent;border-bottom:3px solid transparent}
+.arrow.a1{animation:arrow-in 8s infinite 1s}
+.arrow.a2{animation:arrow-in 8s infinite 2.5s}
+@keyframes step-in{0%,100%{opacity:0;transform:translateY(6px)}6%,75%{opacity:1;transform:translateY(0)}}
+@keyframes step-ring{0%,4%{}10%,18%{}}
+.step.s1::after,.step.s2::after,.step.s3::after{animation:ring 8s infinite}
+.step.s1::after{animation-delay:.4s}
+.step.s2::after{animation-delay:1.9s}
+.step.s3::after{animation-delay:3.4s}
+@keyframes ring{0%,3%{opacity:0;transform:scale(.92)}10%,18%{opacity:1;transform:scale(1)}25%,100%{opacity:0;transform:scale(1)}}
+@keyframes step-zoom{0%,40%{transform:translateY(0) scale(1)}50%,60%{transform:translateY(0) scale(1.12);box-shadow:0 8px 24px rgba(61,61,255,.18)}70%,100%{transform:translateY(0) scale(1)}}
+@keyframes arrow-in{0%,2%{opacity:0;width:0}10%,72%{opacity:1;width:24px}}
+
+/* ==================================================================== */
+/*  effect 2 — compare                                                  */
+/* ==================================================================== */
+.stage-compare{display:flex;align-items:center;justify-content:center;gap:18px;padding:22px}
+.cmp{flex:1;max-width:160px;padding:18px 14px;border-radius:10px;text-align:center;font-family:var(--font-mono);font-size:12.5px;background:var(--paper);position:relative}
+.cmp.wrong{border:2px solid var(--warn);color:var(--warn);animation:shake 5s infinite}
+.cmp.right{border:2px solid var(--ok);color:var(--ok);animation:scale-in 5s infinite}
+.cmp .badge{position:absolute;top:-12px;right:-12px;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700}
+.cmp.wrong .badge{background:var(--warn)}
+.cmp.right .badge{background:var(--ok)}
+.cmp-vs{font-family:var(--font-mono);font-size:11px;color:var(--ink-500);letter-spacing:.1em}
+@keyframes shake{0%,42%,100%{transform:translateX(0)}44%{transform:translateX(-3px)}46%{transform:translateX(3px)}48%{transform:translateX(-2px)}50%{transform:translateX(2px)}52%{transform:translateX(0)}}
+@keyframes scale-in{0%,40%{transform:scale(1)}55%,75%{transform:scale(1.08)}90%,100%{transform:scale(1)}}
+
+/* ==================================================================== */
+/*  effect 3 — formula highlight                                        */
+/* ==================================================================== */
+.stage-formula{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:22px;gap:16px}
+.formula{position:relative;font-family:var(--font-display);font-size:24px;font-weight:600;padding:6px 10px;color:var(--ink-1000)}
+.formula::before{content:'';position:absolute;left:0;top:0;height:100%;width:0;background:var(--mark);mix-blend-mode:multiply;border-radius:3px;animation:hl-sweep 5s infinite;z-index:-1}
+.formula::after{content:'';position:absolute;left:0;top:0;height:100%;width:0;background:rgba(0,0,0,0)}
+.formula{z-index:0}
+.formula > span{position:relative;z-index:1}
+@keyframes hl-sweep{0%,8%{width:0}30%,72%{width:100%}90%,100%{width:0}}
+.conclusion{font-family:var(--font-display);font-size:14px;color:var(--ink-700);text-align:center;padding:6px 12px;border-radius:6px;animation:glow 5s infinite}
+@keyframes glow{0%,40%{text-shadow:none;color:var(--ink-700)}55%,80%{text-shadow:0 0 12px rgba(61,61,255,.5);color:var(--accent)}95%,100%{text-shadow:none;color:var(--ink-700)}}
+
+/* ==================================================================== */
+/*  effect 4 — opinion annotation                                       */
+/* ==================================================================== */
+.stage-opinion{padding:22px;display:flex;align-items:center}
+.opinion-text{font-family:var(--font-display);font-size:15px;line-height:1.7;color:var(--ink-800);position:relative}
+.opinion-text .circle{position:relative;display:inline-block}
+.opinion-text .circle svg{position:absolute;left:-6px;top:-3px;width:calc(100% + 12px);height:calc(100% + 8px);overflow:visible;pointer-events:none}
+.opinion-text .circle svg ellipse{fill:none;stroke:var(--accent);stroke-width:1.6;stroke-dasharray:160;stroke-dashoffset:160;animation:draw 6s infinite}
+.opinion-text .circle.c2 svg ellipse{animation-delay:1.4s}
+.opinion-text .underline{position:relative;display:inline-block;padding-bottom:1px}
+.opinion-text .underline::after{content:'';position:absolute;left:0;bottom:0;height:2px;width:0;background:var(--accent);animation:ul-grow 6s infinite 2.6s}
+@keyframes draw{0%,8%{stroke-dashoffset:160}25%,80%{stroke-dashoffset:0}95%,100%{stroke-dashoffset:160}}
+@keyframes ul-grow{0%,5%{width:0}25%,80%{width:100%}95%,100%{width:0}}
+
+/* ==================================================================== */
+/*  effect 5 — quote highlight                                          */
+/* ==================================================================== */
+.stage-quote{display:flex;align-items:center;justify-content:center;padding:22px}
+.quote{font-family:var(--font-display);font-size:18px;font-weight:600;line-height:1.5;color:var(--ink-1000);text-align:center;max-width:80%;animation:bounce-in 5s infinite}
+.quote .em{display:inline-block;color:var(--accent);animation:pulse 2.4s infinite}
+.quote .em.delay{animation-delay:1.2s}
+@keyframes bounce-in{0%,12%{opacity:0;transform:translateY(8px) scale(.96)}25%,90%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:0;transform:translateY(-4px) scale(.98)}}
+@keyframes pulse{0%,40%,100%{text-shadow:none;transform:scale(1)}55%{text-shadow:0 0 16px rgba(61,61,255,.55);transform:scale(1.06)}80%{text-shadow:none;transform:scale(1)}}
+
+/* ==================================================================== */
+/*  effect 6 — chart annotation                                         */
+/* ==================================================================== */
+.stage-chart{display:flex;align-items:flex-end;justify-content:center;gap:12px;padding:22px 22px 32px}
+.bar{flex:none;width:24px;background:var(--ink-300);border-radius:3px 3px 0 0;position:relative}
+.bar.h1{height:30%}.bar.h2{height:55%}.bar.h3{height:80%;background:var(--ink-1000)}.bar.h4{height:50%}.bar.h5{height:38%}
+.bar.peak::before{content:'';position:absolute;inset:-8px;border:2px solid var(--accent);border-radius:50%;opacity:0;animation:peak-pulse 3s infinite}
+.bar.peak::after{content:'';position:absolute;left:50%;bottom:calc(100% + 14px);transform:translateX(-50%);width:1px;height:18px;background:var(--accent);opacity:0;animation:arrow-fade 3s infinite}
+@keyframes peak-pulse{0%,15%{opacity:0;transform:scale(.85)}40%{opacity:1;transform:scale(1)}65%{opacity:0;transform:scale(1.15)}100%{opacity:0;transform:scale(1.15)}}
+@keyframes arrow-fade{0%,15%{opacity:0;transform:translate(-50%,8px)}40%,80%{opacity:1;transform:translate(-50%,0)}100%{opacity:0}}
+
+/* ==================================================================== */
+/*  effect 7 — feature annotation                                       */
+/* ==================================================================== */
+.stage-feature{display:flex;flex-direction:column;justify-content:center;padding:22px;gap:10px}
+.feat{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--ink-200);border-radius:7px;background:var(--paper);font-size:13px;color:var(--ink-800);position:relative}
+.feat .dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--ink-300)}
+.feat .label{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:var(--ink-1000);color:var(--paper);padding:3px 8px;border-radius:4px;font-family:var(--font-mono);font-size:10.5px;font-weight:600;opacity:0}
+.feat.f1{animation:feat-active 9s infinite}
+.feat.f2{animation:feat-active 9s infinite 3s}
+.feat.f3{animation:feat-active 9s infinite 6s}
+.feat.f1 .label{animation:label-in 9s infinite}
+.feat.f2 .label{animation:label-in 9s infinite 3s}
+.feat.f3 .label{animation:label-in 9s infinite 6s}
+@keyframes feat-active{0%,1%{border-color:var(--ink-200);background:var(--paper)}5%,28%{border-color:var(--accent);background:var(--accent-soft)}33%,100%{border-color:var(--ink-200);background:var(--paper)}}
+@keyframes label-in{0%,1%{opacity:0;transform:translate(8px,-50%)}8%,28%{opacity:1;transform:translate(0,-50%)}33%,100%{opacity:0;transform:translate(0,-50%)}}
+
+/* ==================================================================== */
+/*  effect 8 — UI flow                                                  */
+/* ==================================================================== */
+.stage-ui{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:22px;gap:18px}
+.ui-btn{position:relative;padding:9px 18px;background:var(--ink-1000);color:var(--paper);border-radius:7px;font-size:13px;font-weight:500}
+.ui-btn::after{content:'';position:absolute;inset:-3px;border-radius:10px;border:2px solid var(--accent);opacity:0;animation:ripple 4s infinite}
+@keyframes ripple{0%,15%{opacity:0;transform:scale(.95)}25%{opacity:1;transform:scale(1)}45%{opacity:0;transform:scale(1.4)}100%{opacity:0}}
+.ui-arrow{height:38px;position:relative}
+.ui-arrow svg{height:100%;overflow:visible}
+.ui-arrow path{fill:none;stroke:var(--ink-700);stroke-width:1.5;stroke-dasharray:60;stroke-dashoffset:60;animation:flow-draw 4s infinite 1s}
+@keyframes flow-draw{0%,15%{stroke-dashoffset:60}40%,82%{stroke-dashoffset:0}95%,100%{stroke-dashoffset:60}}
+.ui-result{padding:14px 18px;border:1px solid var(--ink-200);border-radius:8px;font-size:13px;color:var(--ink-700);background:var(--paper);opacity:0;animation:fade-up 4s infinite 1.6s}
+@keyframes fade-up{0%,30%{opacity:0;transform:translateY(6px)}50%,82%{opacity:1;transform:translateY(0)}95%,100%{opacity:0;transform:translateY(0)}}
+
+/* ==================================================================== */
+/*  effect 9 — handwritten                                              */
+/* ==================================================================== */
+.stage-hand{display:flex;align-items:center;justify-content:center;padding:22px;flex-direction:column;gap:14px}
+.hand-text{font-family:var(--font-display);font-size:16px;color:var(--ink-1000);position:relative}
+.hand-text .marked{position:relative}
+.hand-text svg{position:absolute;left:-10px;top:-6px;width:calc(100% + 20px);height:calc(100% + 14px);overflow:visible;pointer-events:none}
+.hand-text path{fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:200;stroke-dashoffset:200;animation:scribble 5s infinite}
+.hand-note{font-family:var(--font-hand);font-size:24px;color:var(--accent);transform:rotate(-3deg);opacity:0;animation:hand-fade 5s infinite 1.5s}
+@keyframes scribble{0%,8%{stroke-dashoffset:200}40%,82%{stroke-dashoffset:0}95%,100%{stroke-dashoffset:200}}
+@keyframes hand-fade{0%,20%{opacity:0;transform:rotate(-3deg) translateY(4px)}45%,82%{opacity:1;transform:rotate(-3deg) translateY(0)}95%,100%{opacity:0;transform:rotate(-3deg) translateY(0)}}
+
+/* ==================================================================== */
+/*  effect 10 — magnifier                                               */
+/* ==================================================================== */
+.stage-mag{padding:22px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.mag-bg{font-family:var(--font-display);font-size:14px;line-height:1.7;color:var(--ink-700);text-align:center;max-width:90%;filter:blur(.4px);transition:filter .3s}
+.mag-bg b{color:var(--ink-1000);font-weight:600}
+.mag-lens{position:absolute;width:96px;height:96px;border-radius:50%;border:2px solid var(--ink-1000);box-shadow:0 6px 22px rgba(10,10,11,.15);background:rgba(255,255,252,.5);backdrop-filter:blur(0px);transform:translate(-50%,-50%);animation:mag-move 7s infinite ease-in-out;pointer-events:none}
+.mag-lens::after{content:'2x';position:absolute;right:-2px;bottom:-22px;font-family:var(--font-mono);font-size:10px;color:var(--ink-1000);font-weight:600}
+@keyframes mag-move{0%{top:50%;left:18%}50%{top:50%;left:82%}100%{top:50%;left:18%}}
+
+/* ==================================================================== */
+/*  effect 11 — multi-card video                                        */
+/* ==================================================================== */
+.stage-multi{padding:22px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.multi-track{display:flex;gap:12px;animation:slide 9s infinite ease-in-out}
+.mini-card{flex:none;width:120px;height:170px;border:1px solid var(--ink-200);border-radius:6px;background:var(--paper);padding:14px 12px;display:flex;flex-direction:column;justify-content:space-between;font-size:11px;color:var(--ink-800);position:relative}
+.mini-card .mc-num{font-family:var(--font-mono);font-size:10px;color:var(--accent);font-weight:700}
+.mini-card .mc-title{font-family:var(--font-display);font-size:13px;font-weight:700;line-height:1.2}
+.mini-card .mc-tag{position:absolute;top:8px;right:8px;width:18px;height:18px;border-radius:50%;background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center}
+@keyframes slide{0%,18%{transform:translateX(0)}30%,48%{transform:translateX(-132px)}60%,78%{transform:translateX(-264px)}90%,100%{transform:translateX(0)}}
+
+/* ==================================================================== */
+/*  effect 12 — lecture mode                                            */
+/* ==================================================================== */
+.stage-lecture{padding:22px;display:flex;align-items:center}
+.lec-text{font-family:var(--font-display);font-size:14.5px;line-height:1.85;color:var(--ink-700)}
+.lec-text .line{display:block;position:relative;padding:2px 6px;border-radius:4px;transition:background .25s}
+.lec-text .l1{animation:lec 9s infinite}
+.lec-text .l2{animation:lec 9s infinite 2.2s}
+.lec-text .l3{animation:lec 9s infinite 4.4s}
+.lec-text .l4{animation:lec 9s infinite 6.6s}
+@keyframes lec{0%,1%{background:transparent;color:var(--ink-700)}5%,22%{background:var(--accent-soft);color:var(--ink-1000)}30%,100%{background:transparent;color:var(--ink-700)}}
+
+/* ==================================================================== */
+/*  footer                                                              */
+/* ==================================================================== */
+.outro{margin-top:80px;padding:32px;border:1px solid var(--ink-200);border-radius:12px;background:var(--ink-1000);color:var(--paper)}
+.outro h3{margin:0 0 12px;font-family:var(--font-display);font-size:24px;font-weight:700}
+.outro .layers{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin:18px 0 0;background:var(--ink-700);border-radius:8px;overflow:hidden}
+@media (max-width:760px){.outro .layers{grid-template-columns:repeat(2,1fr)}}
+.outro .layers div{background:var(--ink-1000);padding:16px;font-size:13px}
+.outro .layers strong{display:block;font-family:var(--font-display);font-size:15px;color:var(--paper);margin:0 0 4px}
+.outro .layers span{color:var(--ink-300)}
+.outro .verdict{margin:18px 0 0;padding:14px 18px;border-left:3px solid var(--accent);font-family:var(--font-display);font-size:16px;line-height:1.5;color:var(--paper)}
+.foot{margin:48px 0 0;text-align:center;color:var(--ink-500);font-family:var(--font-mono);font-size:11px;letter-spacing:.06em}
+.foot a{color:var(--ink-700)}
+</style>
+</head>
+<body>
+<main class="page">
+  <section class="hero">
+    <a class="hero-brand" href="/" aria-label="vCard"><img src="/vcard-logo.svg" alt="vCard" /></a>
+    <p class="kicker">Annotation Skill matrix</p>
+    <h1>视觉<em>注意力</em>控制系统</h1>
+    <p>静态卡片是信息，<strong style="color:var(--ink-1000)">带标注</strong>的卡片是「内容 + 节奏 + 引导」。下面是 12 种把卡片转成可传播资产的标注效果，每个都在自动循环演示。</p>
+    <div class="pillrow">
+      <span>用户看哪里</span><span>什么时候看</span><span>为什么停留</span>
+    </div>
+  </section>
+
+  <!-- ============ 教育类 ============ -->
+  <section class="cat">
+    <header class="cat-head">
+      <span class="num">A</span>
+      <h2>教育类</h2>
+      <span class="lead">把静态知识卡 → 讲解视频</span>
+    </header>
+    <div class="grid">
+
+      <article class="demo">
+        <div class="demo-head"><span class="demo-num">01</span><div><h3>知识拆解卡片</h3><p class="use">"3 步理解贝叶斯定理"</p></div></div>
+        <div class="stage stage-step">
+          <div class="step s1"><span class="n">1</span>定义先验</div>
+          <span class="arrow a1"></span>
+          <div class="step s2"><span class="n">2</span>更新观察</div>
+          <span class="arrow a2"></span>
+          <div class="step s3"><span class="n">3</span>得到后验</div>
+        </div>
+        <details class="cfg"><summary>config</summary><pre>{
+  "type": "step_annotation",
+  "mode": "sequential",
+  "steps": [
+    {"target": "Step1", "effect": "box_highlight"},
+    {"target": "Step2", "effect": "arrow_flow"},
+    {"target": "Step3", "effect": "zoom_focus"}
+  ]
+}</pre></details>
+        <p class="demo-foot">逐步讲解 = AI 自动生成课程内容的核心动作</p>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><span class="demo-num">02</span><div><h3>错题讲解 / 对比解析</h3><p class="use">"这个写法为什么错？"</p></div></div>
+        <div class="stage stage-compare">
+          <div class="cmp wrong"><span class="badge">✕</span>== '0'</div>
+          <span class="cmp-vs">VS</span>
+          <div class="cmp right"><span class="badge">✓</span>=== '0'</div>
+        </div>
+        <details class="cfg"><summary>config</summary><pre>{
+  "type": "compare_annotation",
+  "left": "wrong_example",
+  "right": "correct_example",
+  "effects": ["shake", "cross_mark", "highlight"]
+}</pre></details>
+        <p class="demo-foot">冲突感 → 教育内容点击率最高的母模板</p>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><span class="demo-num">03</span><div><h3>公式 / 重点记忆强化</h3><p class="use">荧光笔 + 结论 glow</p></div></div>
+        <div class="stage stage-formula">
+          <div class="formula"><span>P(A|B) = P(B|A)·P(A) / P(B)</span></div>
+          <div class="conclusion">→ 后验 ∝ 似然 × 先验</div>
+        </div>
+        <details class="cfg"><summary>config</summary><pre>{
+  "type": "memory_anchor",
+  "highlight": "formula",
+  "conclusion_effect": "glow"
+}</pre></details>
+        <p class="demo-foot">把"看过"变成"记住"，短视频刷屏的隐形机制</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ============ 资讯营销 ============ -->
+  <section class="cat">
+    <header class="cat-head">
+      <span class="num">B</span>
+      <h2>资讯 / 内容营销</h2>
+      <span class="lead">把信息变成观点</span>
+    </header>
+    <div class="grid">
+
+      <article class="demo">
+        <div class="demo-head"><span class="demo-num">04</span><div><h3>热点新闻解读</h3><p class="use">"OpenAI 又出新模型，这次变了什么？"</p></div></div>
+        <div class="stage stage-opinion">
+          <p class="opinion-text">这次更新的核心不是<span class="circle">能力</span>变强，而是<span class="circle c2">交付方式</span>。<span class="underline">从"给建议"进入"委托执行"阶段。</span></p>
+        </div>
+        <details class="cfg"><summary>config</summary><pre>{
+  "type": "opinion_annotation",
+  "targets": ["核心观点", "结论句"],
+  "style": "editorial"
+}</pre></details>
+        <p class="demo-foot">观点比信息更容易被转发</p>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><span class="demo-num">05</span><div><h3>金句卡片</h3><p class="use">小红书传播利器</p></div></div>
+        <div class="stage stage-quote">
+          <p class="quote">"<span class="em">自由</span>不是想做什么就做什么，<br/>而是不想做什么就不做什么。"</p>
+        </div>
+        <details class="cfg"><summary>config</summary><pre>{
+  "type": "quote_highlight",
+  "emphasis_words": ["自由"],
+  "animation": "pulse"
+}</pre></details>
+        <p class="demo-foot">天然适合截图收藏与转发</p>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><span class="demo-num">06</span><div><h3>数据解读</h3><p class="use">"图表"变"故事"</p></div></div>
+        <div class="stage stage-chart">
+          <div class="bar h1"></div>
+          <div class="bar h2"></div>
+          <div class="bar h3 peak"></div>
+          <div class="bar h4"></div>
+          <div class="bar h5"></div>
+        </div>
+        <details class="cfg"><summary>config</summary><pre>{
+  "type": "chart_annotation",
+  "highlight_points": ["peak", "drop"],
+  "effects": ["pulse", "arrow"]
+}</pre></details>
+        <p class="demo-foot">让读者一眼看出"哪个最值得关注"</p>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ============ 产品转化 ============ -->
+  <section class="cat">
+    <header class="cat-head">
+      <span class="num">C</span>
+      <h2>产品 / 商业转化</h2>
+      <span class="lead">直接影响转化率</span>
+    </header>
+    <div class="grid">
+
+      <article class="demo">
+        <div class="demo-head"><span class="demo-num">07</span><div><h3>产品卖点讲解</h3><p class="use">"这个 AI 产品 3 个核心能力"</p></div></div>
+        <div class="stage stage-feature">
+          <div class="feat f1"><span class="dot"></span>语音克隆<span class="label">低成本</span></div>
+          <div class="feat f2"><span class="dot"></span>低延迟响应<span class="label">&lt;200ms</span></div>
+          <div class="feat f3"><span class="dot"></span>多语言切换<span class="label">12 种</span></div>
+        </div>
+        <details class="cfg"><summary>config</summary><pre>{
+  "type": "feature_annotation",
+  "features": [
+    {"target": "语音克隆", "label": "低成本"},
+    {"target": "低延迟", "label": "<200ms"}
+  ]
+}</pre></details>
+        <p class="demo-foot">逐点高亮 + 价值标签 = 转化路径</p>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><span class="demo-num">08</span><div><h3>UI 演示（操作路径）</h3><p class="use">产品 demo 视频自动生成</p></div></div>
+        <div class="stage stage-ui">
+          <div class="ui-btn">提交</div>
+          <div class="ui-arrow"><svg viewBox="0 0 30 38"><path d="M15 4 L15 30 M9 24 L15 30 L21 24"/></svg></div>
+          <div class="ui-result">已成功生成 7 张卡片</div>
+        </div>
+        <details class="cfg"><summary>config</summary><pre>{
+  "type": "ui_flow_annotation",
+  "steps": [
+    {"target": "按钮A", "action": "click"},
+    {"target": "页面B", "action": "highlight"}
+  ]
+}</pre></details>
+        <p class="demo-foot">点哪里 → 出现什么 = demo 视频的全部</p>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ============ 内容增强 ============ -->
+  <section class="cat">
+    <header class="cat-head">
+      <span class="num">D</span>
+      <h2>内容增强</h2>
+      <span class="lead">差异化 + 真人感</span>
+    </header>
+    <div class="grid">
+
+      <article class="demo">
+        <div class="demo-head"><span class="demo-num">09</span><div><h3>手绘风格批注</h3><p class="use">打破 AI 内容"太干净"</p></div></div>
+        <div class="stage stage-hand">
+          <p class="hand-text">关键句：<span class="marked">从"工具"到"同事"
+            <svg viewBox="0 0 200 40" preserveAspectRatio="none"><path d="M5 20 Q50 5 100 18 T195 20 Q190 32 100 32 T5 20 Z"/></svg>
+          </span></p>
+          <p class="hand-note">↗ 这是真正的转折点</p>
+        </div>
+        <details class="cfg"><summary>config</summary><pre>{
+  "type": "handwritten_annotation",
+  "randomness": 0.3
+}</pre></details>
+        <p class="demo-foot">真人感 = 信任感，AI 内容里最稀缺的元素</p>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><span class="demo-num">10</span><div><h3>局部放大（视觉引导）</h3><p class="use">2x lens + blur background</p></div></div>
+        <div class="stage stage-mag">
+          <p class="mag-bg">在一段密集的资讯里，<b>真正决定阅读节奏</b>的从来不是字号，而是「视觉重心」。让读者在该停的地方停下来，是<b>编辑部的技术活</b>。</p>
+          <div class="mag-lens"></div>
+        </div>
+        <details class="cfg"><summary>config</summary><pre>{
+  "type": "magnifier",
+  "zoom": 1.8
+}</pre></details>
+        <p class="demo-foot">非常适合视频里"局部细节"的强引导</p>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ============ 视频化 ============ -->
+  <section class="cat">
+    <header class="cat-head">
+      <span class="num">E</span>
+      <h2>视频化增强</h2>
+      <span class="lead">小红书图文 → 视频自动生成</span>
+    </header>
+    <div class="grid">
+
+      <article class="demo">
+        <div class="demo-head"><span class="demo-num">11</span><div><h3>多卡片转视频</h3><p class="use">翻页 + 单页标注</p></div></div>
+        <div class="stage stage-multi">
+          <div class="multi-track">
+            <div class="mini-card"><span class="mc-tag">1</span><span class="mc-num">01 / 03</span><span class="mc-title">Codex 是什么</span></div>
+            <div class="mini-card"><span class="mc-tag">2</span><span class="mc-num">02 / 03</span><span class="mc-title">能力变化</span></div>
+            <div class="mini-card"><span class="mc-tag">3</span><span class="mc-num">03 / 03</span><span class="mc-title">对内容人意味着什么</span></div>
+          </div>
+        </div>
+        <details class="cfg"><summary>config</summary><pre>{
+  "type": "multi_card_video",
+  "transition": "slide",
+  "annotation": true
+}</pre></details>
+        <p class="demo-foot">同一份大纲 → 一键产出社媒视频</p>
+      </article>
+
+      <article class="demo">
+        <div class="demo-head"><span class="demo-num">12</span><div><h3>讲解式视频</h3><p class="use">类似老师讲课，配合 TTS</p></div></div>
+        <div class="stage stage-lecture">
+          <div class="lec-text">
+            <span class="line l1">先给一个判断：这次更新是范式转折。</span>
+            <span class="line l2">原来你给建议，现在你委托执行。</span>
+            <span class="line l3">读 → 改 → 跑测试 → 出 PR。</span>
+            <span class="line l4">所以"提示词"不再是输入的全部。</span>
+          </div>
+        </div>
+        <details class="cfg"><summary>config</summary><pre>{
+  "type": "lecture_mode",
+  "sync_with_voice": true
+}</pre></details>
+        <p class="demo-foot">同步逐句高亮 + TTS = 杀手级讲解视频</p>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ============ outro ============ -->
+  <section class="outro">
+    <h3>四层能力堆叠</h3>
+    <div class="layers">
+      <div><strong>Layout</strong><span>结构</span></div>
+      <div><strong>Annotation</strong><span>注意力</span></div>
+      <div><strong>Effect</strong><span>视觉冲击</span></div>
+      <div><strong>Video</strong><span>时间维度</span></div>
+    </div>
+    <p class="verdict">没有 Annotation 的卡片 = 信息<br/>有 Annotation 的卡片 = 内容 + 节奏 + 引导 = 可传播资产</p>
+  </section>
+
+  <p class="foot">vCard · annotations-demo · 临时演示页 · <a href="/">返回工作台</a></p>
+</main>
+</body>
+</html>

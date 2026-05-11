@@ -5,7 +5,7 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "skipLibCheck": true,
-    "types": ["node", "./worker-configuration.d.ts"],
+    "types": ["node"],
     "paths": {
       "@vcard/shared-types": ["../../packages/shared-types/src/index.ts"]
     }

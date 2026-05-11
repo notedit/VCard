@@ -1,24 +1,23 @@
-# VCard · 卡片 · 社媒 Studio
+# vCard · 社媒卡片 Studio
 
-AI native 的社媒卡片工作台。给主题 → 选 Skill → 生成信息卡片 → 轻编辑 → 导出。
+AI native 的社媒卡片工作台。给主题 → 编辑大纲 → 定制风格 → 生成卡片 → 在工作台里预览、对话编辑、导出。
 
-平台优先入口、Agent 推进的可对话 Plan、可叠加的 Skills 能力包、gpt-image-2 主体一致性 + 中文文字烧入。
+当前实现包含 web app 与同步 API：HTML 闪卡 / GPT-Image 图片两种模式、5 步真实切换、卡片缩略图侧栏、选中卡片对话编辑、deck/card/generate/chat/export API。
 
 ## 文档入口
 
-- [完整 PRD](./design/public/prd.html) — 产品需求、里程碑、技术选型
-- [Visual System](./design/docs/visual-system.md) — 设计规范
-- [M1 技术方案](./docs/tech-design.md) — 工程蓝本：技术栈、架构、模块、数据模型、关键流程
+- [Design Context](./.impeccable.md) — 当前新版前端设计方向
+- [技术方案](./docs/tech-design.md) — 当前 API、数据库与前端边界
 - [CLAUDE.md](./CLAUDE.md) — AI 协作指南与项目约定
 
 ## 仓库结构
 
 ```text
-apps/api/          Hono on Cloudflare Workers — Plan / Edit / Suggestion agents + image queue consumer
-design/            React + Vite frontend prototype and Studio
+apps/api/          Hono on Cloudflare Workers — deck/card/generate/chat/export API
+apps/web/          React + Vite web app
 packages/          shared-types: 前后端共享类型
-docs/              tech-design, fixtures, m1-test-resources
-sandbox/agent-base/ pivot-pre spike, 已不参与 M1 (保留作为参考)
+docs/              tech-design, fixtures
+sandbox/agent-base/ 历史 spike，仅作参考
 ```
 
 ## 前置依赖
@@ -26,7 +25,6 @@ sandbox/agent-base/ pivot-pre spike, 已不参与 M1 (保留作为参考)
 - Node >= 20（见 `.nvmrc`）
 - npm >= 10
 - Neon Postgres 实例（或自建 Postgres + HTTP proxy）
-- AIHubMix 账号（统一 LLM 网关）
 
 ## 本地启动
 
@@ -36,16 +34,22 @@ sandbox/agent-base/ pivot-pre spike, 已不参与 M1 (保留作为参考)
 npm ci
 ```
 
-API key 统一从 `~/.secrets/common.env` 读取，不要写进仓库。完整本地预览使用 Wrangler 绑定：
+API 只需要 `DATABASE_URL`。完整本地预览：
 
 ```bash
 npm run dev:full
 ```
 
-`dev:full` 会先把 Worker 必需变量 `DATABASE_URL`、`AIHUBMIX_API_KEY` 同步到 `apps/api/.dev.vars`，再启动：
+`dev:full` 会先把 Worker 必需变量 `DATABASE_URL` 同步到 `apps/api/.dev.vars`，再启动：
 
 - API: `http://localhost:8787`
 - 前端: `http://127.0.0.1:5173`
+
+只跑 web app：
+
+```bash
+npm run dev:studio
+```
 
 分开调试时可以跑：
 
@@ -71,13 +75,6 @@ npm run build
 
 测试用独立的 Neon test branch（CI 通过 `DATABASE_URL_TEST` secret 注入），会在用例间清表。`apps/api/vitest.config.ts` 关闭了文件并行，避免共享测试库互相 `TRUNCATE`。
 
-可选的真实 LLM / gpt-image-2 测试默认跳过，靠 env flag 启用：
-
-```bash
-RUN_REAL_IMAGE_TEST=1 npm run -w @vcard/api test
-RUN_REAL_ANTHROPIC_TEST=1 npm run -w @vcard/api test
-```
-
 ## CI
 
 `.github/workflows/ci.yml` 在 PR 与 main push 上跑两个 job：
@@ -87,7 +84,7 @@ RUN_REAL_ANTHROPIC_TEST=1 npm run -w @vcard/api test
 
 ## 部署
 
-Workers + Cloudflare Queues + R2 + Durable Objects。
+Cloudflare Workers + Neon Postgres。
 
 部署顺序：
 

@@ -1,11 +1,11 @@
 {
-  "id": "f4c59070-da2f-4084-a1cf-58967cbe8855",
+  "id": "80e3fdf0-2f59-46b0-885a-da3e60a84301",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.card_images": {
-      "name": "card_images",
+    "public.activity_logs": {
+      "name": "activity_logs",
       "schema": "",
       "columns": {
         "id": {
@@ -15,239 +15,22 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "card_id": {
-          "name": "card_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "gen_job_id": {
-          "name": "gen_job_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "url": {
-          "name": "url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "full_prompt": {
-          "name": "full_prompt",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "card_images_card_id_idx": {
-          "name": "card_images_card_id_idx",
-          "columns": [
-            {
-              "expression": "card_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "card_images_card_id_cards_id_fk": {
-          "name": "card_images_card_id_cards_id_fk",
-          "tableFrom": "card_images",
-          "tableTo": "cards",
-          "columnsFrom": [
-            "card_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "card_images_gen_job_id_gen_jobs_id_fk": {
-          "name": "card_images_gen_job_id_gen_jobs_id_fk",
-          "tableFrom": "card_images",
-          "tableTo": "gen_jobs",
-          "columnsFrom": [
-            "gen_job_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.cards": {
-      "name": "cards",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "index": {
-          "name": "index",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "role": {
-          "name": "role",
-          "type": "card_role",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "body": {
-          "name": "body",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "image_version_id": {
-          "name": "image_version_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "user_edited": {
-          "name": "user_edited",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "locked": {
-          "name": "locked",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        }
-      },
-      "indexes": {
-        "cards_project_id_index_idx": {
-          "name": "cards_project_id_index_idx",
-          "columns": [
-            {
-              "expression": "project_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "index",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "cards_project_id_projects_id_fk": {
-          "name": "cards_project_id_projects_id_fk",
-          "tableFrom": "cards",
-          "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.change_logs": {
-      "name": "change_logs",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "project_id": {
-          "name": "project_id",
+        "deck_id": {
+          "name": "deck_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
         "actor": {
           "name": "actor",
-          "type": "change_actor",
+          "type": "activity_actor",
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
         "target": {
           "name": "target",
-          "type": "change_target",
+          "type": "activity_target",
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
@@ -256,7 +39,7 @@
           "name": "target_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "action": {
           "name": "action",
@@ -285,11 +68,11 @@
         }
       },
       "indexes": {
-        "change_logs_project_created_idx": {
-          "name": "change_logs_project_created_idx",
+        "activity_logs_deck_created_idx": {
+          "name": "activity_logs_deck_created_idx",
           "columns": [
             {
-              "expression": "project_id",
+              "expression": "deck_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -308,12 +91,12 @@
         }
       },
       "foreignKeys": {
-        "change_logs_project_id_projects_id_fk": {
-          "name": "change_logs_project_id_projects_id_fk",
-          "tableFrom": "change_logs",
-          "tableTo": "projects",
+        "activity_logs_deck_id_decks_id_fk": {
+          "name": "activity_logs_deck_id_decks_id_fk",
+          "tableFrom": "activity_logs",
+          "tableTo": "decks",
           "columnsFrom": [
-            "project_id"
+            "deck_id"
           ],
           "columnsTo": [
             "id"
@@ -328,8 +111,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.gen_jobs": {
-      "name": "gen_jobs",
+    "public.chat_messages": {
+      "name": "chat_messages",
       "schema": "",
       "columns": {
         "id": {
@@ -339,67 +122,73 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "project_id": {
-          "name": "project_id",
+        "deck_id": {
+          "name": "deck_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "status": {
-          "name": "status",
-          "type": "gen_job_status",
-          "typeSchema": "public",
+        "card_id": {
+          "name": "card_id",
+          "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'queued'"
+          "notNull": false
         },
-        "main_subject": {
-          "name": "main_subject",
-          "type": "jsonb",
+        "role": {
+          "name": "role",
+          "type": "chat_role",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
-        "art_style": {
-          "name": "art_style",
+        "body": {
+          "name": "body",
           "type": "text",
           "primaryKey": false,
-          "notNull": true,
-          "default": "''"
+          "notNull": true
         },
-        "text_layout": {
-          "name": "text_layout",
-          "type": "text_layout",
-          "typeSchema": "public",
+        "actions": {
+          "name": "actions",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": true,
-          "default": "'top'"
+          "default": "'[]'::jsonb"
         },
-        "started_at": {
-          "name": "started_at",
+        "created_at": {
+          "name": "created_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
-        },
-        "completed_at": {
-          "name": "completed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
-        "gen_jobs_project_status_idx": {
-          "name": "gen_jobs_project_status_idx",
+        "chat_messages_deck_created_idx": {
+          "name": "chat_messages_deck_created_idx",
           "columns": [
             {
-              "expression": "project_id",
+              "expression": "deck_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             },
             {
-              "expression": "status",
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_messages_card_idx": {
+          "name": "chat_messages_card_idx",
+          "columns": [
+            {
+              "expression": "card_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -412,12 +201,175 @@
         }
       },
       "foreignKeys": {
-        "gen_jobs_project_id_projects_id_fk": {
-          "name": "gen_jobs_project_id_projects_id_fk",
-          "tableFrom": "gen_jobs",
-          "tableTo": "projects",
+        "chat_messages_deck_id_decks_id_fk": {
+          "name": "chat_messages_deck_id_decks_id_fk",
+          "tableFrom": "chat_messages",
+          "tableTo": "decks",
           "columnsFrom": [
-            "project_id"
+            "deck_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "chat_messages_card_id_deck_cards_id_fk": {
+          "name": "chat_messages_card_id_deck_cards_id_fk",
+          "tableFrom": "chat_messages",
+          "tableTo": "deck_cards",
+          "columnsFrom": [
+            "card_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.deck_cards": {
+      "name": "deck_cards",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "deck_id": {
+          "name": "deck_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "index": {
+          "name": "index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "bullets": {
+          "name": "bullets",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "layout": {
+          "name": "layout",
+          "type": "card_layout",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'list'"
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "render": {
+          "name": "render",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "image_prompt": {
+          "name": "image_prompt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "image_url": {
+          "name": "image_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_edited": {
+          "name": "user_edited",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "locked": {
+          "name": "locked",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "deck_cards_deck_index_idx": {
+          "name": "deck_cards_deck_index_idx",
+          "columns": [
+            {
+              "expression": "deck_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "index",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "deck_cards_deck_id_decks_id_fk": {
+          "name": "deck_cards_deck_id_decks_id_fk",
+          "tableFrom": "deck_cards",
+          "tableTo": "decks",
+          "columnsFrom": [
+            "deck_id"
           ],
           "columnsTo": [
             "id"
@@ -432,8 +384,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.projects": {
-      "name": "projects",
+    "public.decks": {
+      "name": "decks",
       "schema": "",
       "columns": {
         "id": {
@@ -447,28 +399,36 @@
           "name": "user_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "'demo-user'"
         },
-        "platform": {
-          "name": "platform",
-          "type": "platform",
-          "typeSchema": "public",
+        "title": {
+          "name": "title",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'redbook'"
+          "default": "'Untitled deck'"
         },
-        "topic": {
-          "name": "topic",
+        "prompt": {
+          "name": "prompt",
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "mode": {
+          "name": "mode",
+          "type": "deck_mode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'html'"
         },
         "card_count": {
           "name": "card_count",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "default": 9
+          "default": 7
         },
         "aspect_ratio": {
           "name": "aspect_ratio",
@@ -484,25 +444,17 @@
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'zh'"
+          "default": "'zh-CN'"
         },
-        "tone": {
-          "name": "tone",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'native'"
-        },
-        "skill_ids": {
-          "name": "skill_ids",
+        "settings": {
+          "name": "settings",
           "type": "jsonb",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
+          "notNull": true
         },
         "status": {
           "name": "status",
-          "type": "project_status",
+          "type": "deck_status",
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
@@ -524,11 +476,32 @@
         }
       },
       "indexes": {
-        "projects_user_id_idx": {
-          "name": "projects_user_id_idx",
+        "decks_user_updated_idx": {
+          "name": "decks_user_updated_idx",
           "columns": [
             {
               "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "decks_status_idx": {
+          "name": "decks_status_idx",
+          "columns": [
+            {
+              "expression": "status",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -547,8 +520,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.skills": {
-      "name": "skills",
+    "public.generation_jobs": {
+      "name": "generation_jobs",
       "schema": "",
       "columns": {
         "id": {
@@ -558,129 +531,58 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "author": {
-          "name": "author",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "category": {
-          "name": "category",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "system_prompt": {
-          "name": "system_prompt",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "few_shot_examples": {
-          "name": "few_shot_examples",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "image_refs": {
-          "name": "image_refs",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "output_schema": {
-          "name": "output_schema",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
-        },
-        "applies_to": {
-          "name": "applies_to",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "is_official": {
-          "name": "is_official",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.suggestions": {
-      "name": "suggestions",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "project_id": {
-          "name": "project_id",
+        "deck_id": {
+          "name": "deck_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "card_id": {
-          "name": "card_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "type": {
-          "name": "type",
-          "type": "suggestion_type",
+        "mode": {
+          "name": "mode",
+          "type": "deck_mode",
           "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "message": {
-          "name": "message",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "action_label": {
-          "name": "action_label",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "action_payload": {
-          "name": "action_payload",
-          "type": "jsonb",
           "primaryKey": false,
           "notNull": true
         },
         "status": {
           "name": "status",
-          "type": "suggestion_status",
+          "type": "generation_status",
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'pending'"
+          "default": "'queued'"
+        },
+        "requested": {
+          "name": "requested",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "result": {
+          "name": "result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -691,15 +593,30 @@
         }
       },
       "indexes": {
-        "suggestions_project_status_idx": {
-          "name": "suggestions_project_status_idx",
+        "generation_jobs_deck_created_idx": {
+          "name": "generation_jobs_deck_created_idx",
           "columns": [
             {
-              "expression": "project_id",
+              "expression": "deck_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "generation_jobs_status_idx": {
+          "name": "generation_jobs_status_idx",
+          "columns": [
             {
               "expression": "status",
               "isExpression": false,
@@ -714,25 +631,12 @@
         }
       },
       "foreignKeys": {
-        "suggestions_project_id_projects_id_fk": {
-          "name": "suggestions_project_id_projects_id_fk",
-          "tableFrom": "suggestions",
-          "tableTo": "projects",
+        "generation_jobs_deck_id_decks_id_fk": {
+          "name": "generation_jobs_deck_id_decks_id_fk",
+          "tableFrom": "generation_jobs",
+          "tableTo": "decks",
           "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "suggestions_card_id_cards_id_fk": {
-          "name": "suggestions_card_id_cards_id_fk",
-          "tableFrom": "suggestions",
-          "tableTo": "cards",
-          "columnsFrom": [
-            "card_id"
+            "deck_id"
           ],
           "columnsTo": [
             "id"
@@ -749,50 +653,79 @@
     }
   },
   "enums": {
+    "public.activity_actor": {
+      "name": "activity_actor",
+      "schema": "public",
+      "values": [
+        "user",
+        "assistant",
+        "system"
+      ]
+    },
+    "public.activity_target": {
+      "name": "activity_target",
+      "schema": "public",
+      "values": [
+        "deck",
+        "card",
+        "generation",
+        "chat"
+      ]
+    },
     "public.aspect_ratio": {
       "name": "aspect_ratio",
       "schema": "public",
       "values": [
+        "1:1",
         "4:5",
-        "1:1"
+        "9:16"
       ]
     },
-    "public.card_role": {
-      "name": "card_role",
+    "public.card_layout": {
+      "name": "card_layout",
       "schema": "public",
       "values": [
         "cover",
-        "hook",
-        "argument",
         "list",
-        "payoff",
-        "cta"
+        "quote",
+        "stat",
+        "closer"
       ]
     },
-    "public.change_actor": {
-      "name": "change_actor",
+    "public.chat_role": {
+      "name": "chat_role",
       "schema": "public",
       "values": [
         "user",
-        "agent"
+        "assistant"
       ]
     },
-    "public.change_target": {
-      "name": "change_target",
+    "public.deck_mode": {
+      "name": "deck_mode",
       "schema": "public",
       "values": [
-        "card",
-        "project",
+        "html",
         "image"
       ]
     },
-    "public.gen_job_status": {
-      "name": "gen_job_status",
+    "public.deck_status": {
+      "name": "deck_status",
+      "schema": "public",
+      "values": [
+        "draft",
+        "outlined",
+        "styled",
+        "generating",
+        "ready",
+        "exported"
+      ]
+    },
+    "public.generation_status": {
+      "name": "generation_status",
       "schema": "public",
       "values": [
         "queued",
         "running",
-        "partial",
         "done",
         "failed"
       ]
@@ -801,55 +734,10 @@
       "name": "language",
       "schema": "public",
       "values": [
-        "zh",
-        "en"
-      ]
-    },
-    "public.platform": {
-      "name": "platform",
-      "schema": "public",
-      "values": [
-        "redbook",
-        "greenbook"
-      ]
-    },
-    "public.project_status": {
-      "name": "project_status",
-      "schema": "public",
-      "values": [
-        "draft",
-        "planning",
-        "generating",
-        "editing",
-        "exported"
-      ]
-    },
-    "public.suggestion_status": {
-      "name": "suggestion_status",
-      "schema": "public",
-      "values": [
-        "pending",
-        "accepted",
-        "ignored"
-      ]
-    },
-    "public.suggestion_type": {
-      "name": "suggestion_type",
-      "schema": "public",
-      "values": [
-        "structure",
-        "platform_sop",
-        "quality"
-      ]
-    },
-    "public.text_layout": {
-      "name": "text_layout",
-      "schema": "public",
-      "values": [
-        "top",
-        "calligraphy",
-        "fullscreen",
-        "caption"
+        "zh-CN",
+        "zh-TW",
+        "en",
+        "ja"
       ]
     }
   },

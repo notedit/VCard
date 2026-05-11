@@ -1,6 +1,10 @@
 # macOS
 .DS_Store
 
+
+cards/
+image-cards/
+
 # Logs
 *.log
 npm-debug.log*

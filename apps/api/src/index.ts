@@ -8,8 +8,14 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
+const env = {
+  DATABASE_URL,
+  AIHUBMIX_API_KEY: process.env.AIHUBMIX_API_KEY,
+  TAVILY_API_KEY: process.env.TAVILY_API_KEY,
+};
+
 serve({
-  fetch: (req) => app.fetch(req, { DATABASE_URL }),
+  fetch: (req) => app.fetch(req, env),
   port,
 });
 

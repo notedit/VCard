@@ -1,22 +1,19 @@
 # wrangler dev local secrets — copy to .dev.vars and fill from ~/.secrets/common.env
 # (.dev.vars is gitignored; this .example file lists key names only)
 
-# === LLM gateway (M1 verified path: AIHubMix) ===
-# OpenAI-compatible endpoint (chat + images + gpt-image-2)
-AIHUBMIX_API_KEY=
-AIHUBMIX_OPENAI_BASE_URL=https://aihubmix.com/v1
-# Anthropic native endpoint (note: NO /v1 suffix)
-AIHUBMIX_ANTHROPIC_BASE_URL=https://aihubmix.com
-
-# === Fallback paths (optional, for redundancy) ===
-# Cloudflare AI Gateway (chat works; image endpoints currently 401, see memory)
-CF_AIG_TOKEN=
-CF_AIG_ACCOUNT_ID=
-CF_AIG_GATEWAY_SLUG=voxflow
-
-# === Database ===
-# Neon Postgres serverless connection string (HTTP driver via @neondatabase/serverless)
+# Neon Postgres serverless connection string.
 DATABASE_URL=
 
-# === Object storage / queues are configured as Workers bindings in wrangler.toml,
-# not as env vars. ===
+# AIHubMix API key (Anthropic-native baseURL). Required for LLM outline generation.
+# When missing, /decks creation falls back to a local template.
+AIHUBMIX_API_KEY=
+
+# Tavily API key for web search inside outline generation.
+# When missing, the LLM still runs but the web_search tool returns no results.
+TAVILY_API_KEY=
+
+# Image generation will reuse AIHUBMIX_API_KEY above (via baseURL https://aihubmix.com/v1
+# OpenAI-compatible endpoint), so no separate key is required for image mode.
+# Set OPENAI_API_KEY only if you want to bypass the gateway and hit OpenAI directly.
+# When BOTH are missing, /decks/:id/generate (image mode) returns SVG data-URL placeholders.
+OPENAI_API_KEY=

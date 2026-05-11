@@ -6,39 +6,25 @@
 
 ## 项目
 
-**卡片 · 社媒 Studio** —— AI native 的社媒卡片工作台。给主题、出爆款图文。
-核心差异化：平台优先入口、Agent 推进的可对话 Plan、可叠加的 Skills 能力包、gpt-image-2 主体一致性 + 中文文字烧入。
+**vCard · 社媒卡片 Studio** —— AI native 的社媒卡片工作台。给主题、编辑大纲、定制风格、生成卡片、对话编辑后导出。
+当前主线：HTML 闪卡 / GPT-Image 图片两种模式、5 步真实切换、缩略图侧栏、选中卡片对话编辑、deck/card/generate/chat/export API。
 
 ## 必读文档
 
-- **[Visual System 设计规范](./design/docs/visual-system.md)** — 中保真起所有视觉决定的依据：设计哲学、色彩、字体、组件、间距、Voice & Tone、Motion。
-- **[完整 PRD](./design/public/prd.html)** — 产品需求、里程碑、技术选型、验收标准、风险。
-- **[技术方案 (M1)](./docs/tech-design.md)** — 工程蓝本：技术栈、架构、模块、数据模型、关键流程、验证策略、里程碑。
+- **[Design Context](./.impeccable.md)** — 当前新版前端设计方向：极简专业、黑白灰 + 一个强调色、资讯工作台。
+- **[技术方案](./docs/tech-design.md)** — 当前 API、数据库与前端边界。
 
 ## 实现约定
 
-- `design/` 里的屏幕是 **wireframe 低保真草图**（手绘风），仅用于 wireframe 阶段。中保真 / 生产实现必须改为按 [Visual System](./design/docs/visual-system.md) 执行。
+- `apps/web/` 是当前 web app；旧设计目录、wireframe 和旧设计规范不再作为实现依据。
 - Voice & Tone 规则适用于**所有** AI 输出文案，不限于 UI。
-- **API key 统一从 `~/.secrets/common.env` 读取**（如 `AIHUBMIX_API_KEY`、`CF_AIG_TOKEN`、`OPENROUTER_API_KEY` 等）。运行脚本前用 `set -a && . ~/.secrets/common.env && set +a` 注入；**不要**把真值写进仓库内任何文件，包括 `.env.example` / `.dev.vars.example`（这些只放占位 key 名）。
+- **本地密钥从 `~/.secrets/common.env` 读取**。当前 API 只需要 `DATABASE_URL`；不要把真值写进仓库内任何文件，包括 `.env.example` / `.dev.vars.example`。
 
 ## 工作流程
 
-### GitHub Issue 联动
-
-如果任务来源于 GitHub Issue，全程通过 `gh issue comment` 同步状态：
-
-- **开始开发时**：留言 "Working on this"，说明初步思路。
-- **Plan 确定后**：将方案摘要（改动范围、关键决策）同步到 Issue。
-- **Plan 有重大变更时**：更新 Issue 说明变更原因和新方案。
-- **提交 PR 时**：用 `gh pr create --body "Closes #<issue>"` 或 `Fixes #<issue>` 绑定 Issue，确保 PR 合并后自动关闭 Issue。
-
-### 验证先行
-
 开发新功能前先确定验证方式：写测试、定义可观测指标、或准备手动验证步骤。**确保改动可被验证后再动手。**
 
-### 技术方案同步
-
-`docs/tech-design.md` 是 M1 工程实现的单一真相源。**关键方案变更必须同步更新该文档**：
+`docs/tech-design.md` 是当前工程实现的单一真相源。**关键方案变更必须同步更新该文档**：
 
 - **触发条件**：技术栈调整、架构边界变化、模块拆分变动、数据模型增删、关键流程改动、验证 / 风险条目新增。
 - **更新动作**：在同一 PR 里改代码 + 改文档；不允许文档与实现脱节。

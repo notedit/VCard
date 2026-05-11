@@ -1,562 +1,207 @@
-# 卡片 · 社媒 Studio — 技术方案 (M1)
+# vCard 技术方案
 
-> **状态**：M1 设计稿 · 2026-05-03  
-> **范围**：M1（小红书单平台 MVP），M2-M4 仅做前向兼容标注  
-> **关联文档**：[PRD](../design/public/prd.html) · [Visual System](../design/docs/visual-system.md) · [Wireframe 屏幕](../design/src/screens/)  
-> **关联 Issue**：[#1 技术方案设计](https://github.com/notedit/VCard/issues/1)
+> 状态：当前实现方案 · 2026-05-05  
+> 关联文档：[Design Context](../.impeccable.md) · [Web App](../apps/web/src/App.tsx) · [API](../apps/api/src/app.ts)
 
----
+## 1. 目标
 
-## 0. 设计前提
+vCard 是面向资讯和知识分享场景的社媒卡片工作台。核心路径是：
 
-| 约束 | 决策 |
+1. 输入主题和生成参数
+2. 生成或编辑卡片大纲
+3. 定制主题、密度、尺寸和模式
+4. 生成可预览的卡片渲染快照
+5. 在工作台里选中单卡对话编辑并导出
+
+当前目标是保持产品主流程可运行、可验证、可迭代。LLM 大纲、真实图像生成、发布平台和异步任务后续接入，但不提前把复杂基础设施放进主线。
+
+## 2. 仓库边界
+
+| 路径 | 责任 |
 |---|---|
-| 技术栈 | 全栈 TypeScript（仅例外：无） |
-| API 部署 | Cloudflare Workers |
-| Agent 运行时 | Cloudflare Workers 内运行 ToolLoopAgent |
-| Agent 框架 | Vercel AI SDK (`ToolLoopAgent` + AI SDK UI Stream) |
-| 文字校验 | **不做 OCR**，gpt-image-2 直出 + 用户主动重生 |
-| 验证策略 | 验证先行（CLAUDE.md），每个 P0 验收先定测试形态 |
+| `apps/web` | React + Vite 前端应用。提供 5 步工作台、卡片预览、对话编辑 UI |
+| `apps/api` | Hono API。提供 deck/card/generate/chat/export 同步接口 |
+| `packages/shared-types` | 前后端共享的领域类型 |
+| `docs` | 当前技术方案、测试夹具和工程说明 |
 
-> 与 PRD § 13 的差异：原方案的 PaddleOCR 已移除；中文烧字校验（PRD § 09 "OCR ≥ 92%"）改为"人评抽样 ≥ 90%"，**需 PRD 同步更新**。
+旧设计目录已移除。旧 wireframe、旧设计规范和旧 M1 agent 规划不再作为实现依据。
 
----
+## 3. 技术栈
 
-## 0.1 M1 架构决策修订（2026-05-04）
-
-经过容器路径风险评估 + AIHubMix / Neon 验证后，**M1 不再使用 Cloudflare Containers + Pi Coding Agent SDK**。改用 **Workers + Vercel AI SDK `ToolLoopAgent`**：
-
-- **Plan / Edit / Suggestion** 三条 agent 都跑在 Workers 内，用 `ai` 包的 `ToolLoopAgent` + `createAgentUIStreamResponse`（标准 AI SDK UI Stream → 前端 `@ai-sdk/react useChat` 直接吃）
-- **Tools** 用 `tool({ inputSchema: zod, execute })`，execute 闭包持 Drizzle handle 直写 Neon + ChangeLog
-- **Skills** 作为 Postgres 表 + 官方 seed 数据；M2 marketplace 继续扩展同一 schema
-- **Image Service** 维持 Workers producer + Queue consumer：Workers 直接 `openai` SDK 调 gpt-image-2，R2 存图，客户端轮询 GenJob status
-- **`sandbox/agent-base/`** 作为 spike 参考保留，**不再动**；M2+ 真要 sandbox（user-authored 可执行 skill / Python tool / >5min 任务）时反向引入
-
-**为什么改**：
-1. 三条 agent 时长（Plan ≤2min / Edit <5s / Suggestion <10s）全部能在 Workers 5min wall-time 内；`await fetch` 不计 CPU。
-2. PRD §08 Skill schema 全是 JSON metadata + Markdown，**无可执行代码** → 不需要进程隔离。
-3. 状态恢复本来就在 PG/DO storage 层，容器 fs sessions 是反模式（CF Containers 无持久卷）。
-4. 一并消除 §10 两条 P0 风险（CF Containers 演进 / Pi 个人项目维护）。
-5. 测试矩阵从 `miniflare + Docker + 真实 LLM` 缩到 `miniflare + 真实 LLM`。
-
-旧的 Containers / Pi 路径只保留在 `sandbox/agent-base/` 作为 spike 参考，不再是 M1 主线。
-
----
-
-## 1. 范围
-
-| 阶段 | In scope (M1) | Out of scope (M2+) |
+| 层 | 选型 | 说明 |
 |---|---|---|
-| 平台 | 小红书 (4:5 / 9 张) | 小绿书、公众号长图文、抖音、微博 |
-| Skills | 3 个内置（爆款标题手 / 小红书种草体 / 真实摄影） | Skills 市场、自建、分享 |
-| 编辑 | ⌘K 自然语言 + Agent 主动建议 + 撤回 | — |
-| 出口 | ZIP 打包导出 | OAuth 直发、跨平台改版 |
-| 视觉 | gpt-image-2 + 主体一致 + 中文文字烧入 | — |
+| Web | React 18 + Vite + TypeScript | 产品级前端体验，当前不依赖 UI 框架 |
+| API | Hono | 同一 `app.fetch` 可运行在 Node dev server 与 Cloudflare Workers |
+| DB | Neon Postgres + Drizzle ORM | 使用 `@neondatabase/serverless` HTTP driver |
+| Workspace | npm workspaces | `apps/*`、`packages/*`、`sandbox/*` |
 
----
+## 4. 领域模型
 
-## 2. 技术栈
+核心对象是 `deck`，不是旧的 `project`。
 
-| 层 | 选型 | 理由 |
-|---|---|---|
-| 前端 | React 18 + Vite + TypeScript | 沿用 `design/`，按 Visual System 重做中保真；部署到 Cloudflare Pages |
-| **API 层** | **Hono on Cloudflare Workers** | Workers Runtime 原生 / 极轻 / TS 一等公民。承担：路由、鉴权、CRUD、SSE，**包含 agent loop**（M1 决策修订，见 §0.1） |
-| **Agent 框架** | **Vercel AI SDK** (`ai` v6) — `ToolLoopAgent` + `createAgentUIStreamResponse` | 官方推荐的多步 tool-calling 抽象；Workers 完全兼容；前端配套 `@ai-sdk/react useChat` |
-| 模型路由 | AIHubMix（OpenAI `/v1` + Anthropic-compatible `/v1/messages`）→ Claude Sonnet 4.5（Plan）/ Haiku 4.5（Edit/Suggestion）；图像走 `openai` SDK 调 gpt-image-2 | AIHubMix 已实测三条路径全通；gpt-image-2 不走 agent loop |
-| 数据库 | Neon Postgres + Drizzle ORM | Workers 用 Neon HTTP serverless 驱动直读；Tool execute 闭包持 DB handle 写入 |
-| 对象存储 | R2 | CF 原生、零出口费用 |
-| 队列 | Cloudflare Queues | 9 图生成 fan-out + reflect 异步触发 |
-| 实时 | AI SDK UI Stream（Plan/Edit）+ 轮询 GenJob status（Image） | GenJob SSE fan-out 延后 |
-| URL 抓取 | `@mozilla/readability` + 自研针对小红书 / 公众号 / 知乎 | 在 Workers 上跑 |
-
----
-
-## 3. 高层架构
-
-```
-┌──────────────────────────────────────────────────┐
-│ Web / Studio (React + Vite, Cloudflare Pages)    │
-└──────────────┬───────────────────────────────────┘
-               │ HTTP + AI SDK UI Stream
-┌──────────────▼───────────────────────────────────┐
-│ Hono on Cloudflare Workers                       │
-│  Project / Cards / Skills / Export / Images      │
-│  Plan Agent  → ToolLoopAgent → create_card       │
-│  Edit Agent  → ToolLoopAgent → propose_edit      │
-│  Suggestion  → Queue consumer → propose_suggest  │
-│  Image Job   → Queue producer + status polling   │
-└─┬───────────────┬──────────────────────┬─────────┘
-  │               │                      │
-  ▼               ▼                      ▼
-┌──────────┐  ┌──────────────┐     ┌──────────────┐
-│ Neon PG  │  │ CF Queues    │     │ R2 Images    │
-└──────────┘  └──────────────┘     └──────────────┘
-       ▲              │
-       │              ▼
-       └────── AIHubMix / Anthropic / OpenAI
-```
-
-**通信模式**：
-
-- 客户端 ↔ Workers：HTTP + AI SDK UI Stream（Plan/Edit）
-- Workers ↔ AIHubMix：Anthropic 模型用于 Plan/Edit/Suggestion，OpenAI 图像路径用于 gpt-image-2
-- Workers ↔ Neon：Drizzle + Neon HTTP driver
-- Workers ↔ Queues：`gen-image-jobs` 处理图片，`suggestion-reflect` 处理异步建议
-- Workers ↔ R2：`CardImage.url` 存 R2 key，`GET /images/*` 代理读取
-
----
-
-## 4. M2+ Sandbox Deferred
-
-M1 不运行 Cloudflare Containers，也不需要 Docker/Pi 适配层。只有当 M2+ 出现以下需求时，才重新评估 sandbox：
-
-- 用户自定义可执行 Skill
-- Python / 浏览器 / 文件系统等长任务工具
-- 单次 agent 任务超过 Workers 5min wall-time
-- 需要隔离第三方代码或持久 workspace
-
----
-
-## 5. 模块设计
-
-### 5.1 Project Service（CRUD，无 agent）
-
-- **实体**：`Project`、`Card`
-- **API**：
-  - `POST /projects` — 创建
-  - `GET /projects/:id`
-  - `PATCH /projects/:id/cards/:cardId` — 部分更新，乐观锁（version 列）
-  - `PATCH /projects/:id/cards` — 拖拽重排（批量 order 数组）
-- 写动作必走 **ChangeLog**（见 5.8）
-
-### 5.2 Plan Agent（Workers · ToolLoopAgent）
-
-> M1 修订：Workers 内直接跑 ToolLoopAgent，不再走容器。MVP-1 已落地（`apps/api/src/agent/plan-agent.ts`）。
-
-- **模型**：Claude Sonnet 4.5（通过 AIHubMix `/anthropic`）
-- **API**：`POST /projects/:id/plan` → AI SDK UI Stream（标准 SSE，前端 `useChat` 直接吃）
-- **核心代码形态**：
-  ```ts
-  const agent = new ToolLoopAgent({
-    model: anthropic('claude-sonnet-4-5'),
-    instructions: SYSTEM_PROMPT + buildSkillsPrompt(skillIds),
-    tools: { create_card: createCardTool({ db, projectId }), ... },
-    stopWhen: stepCountIs(20),
-  });
-  return createAgentUIStreamResponse({
-    agent,
-    uiMessages: buildInitialPlanMessages(topic),
-    abortSignal: c.req.raw.signal,
-  });
-  ```
-- **流程**：
-  1. 读 project，按需 update `skillIds`，清空旧 cards（restart-friendly），status → `'planning'`
-  2. 构造 ToolLoopAgent + 初始 user message（包含 topic）
-  3. `createAgentUIStreamResponse` 直返 Response，AI SDK 内部驱动 tool loop：每步模型→tool calls→Workers 跑 tool execute→把 tool 结果回灌 → 模型继续，直到无 tool call 或 `stepCountIs(20)`
-  4. 客户端 abort（关闭 EventSource）→ `c.req.raw.signal` → AI SDK 取消上游 fetch
-- **Tools**（execute 闭包持 `{ db, projectId }`，写库 + ChangeLog）：
-  - `create_card(index, role, title, body)` ← MVP-1 已实装
-  - `update_card(cardId, patch)`（MVP-1 后跟进）
-  - `reorder_cards(orderArray)`（MVP-1 后跟进）
-  - `propose_suggestion(...)` 由 Suggestion Service 反射阶段触发，不在 Plan tool 集合里
-- **多 turn followUp**（用户改 Plan）：客户端把已有 `uiMessages` 历史 + 新 user message 一并 POST 回来；ToolLoopAgent 接续上下文继续跑。无需服务端持久化对话。
-- ~~AgentSession DO~~ ⚠️ 不再需要（M2+ 才会重新引入做容器句柄管理）
-
-### 5.3 Skills Service
-
-- **M1 数据**：3 个内置 Skill，单一表示：
-  - **`skills` 表行**（DB 持久 + Web UI 元数据）—— `apps/api/src/app.ts` `seedOfficialSkills()` 启动时 upsert
-  - 每条 row 的 `systemPrompt` 字段就是注入 ToolLoopAgent `instructions` 的源——不再需要单独的 Markdown 文件
-- **Schema**：沿用 PRD § 08 v1
-- **叠加策略**（Workers 侧拼装后注入 ToolLoopAgent `instructions`）：
-  - `Project.skillIds` 数组顺序 = 优先级（idx 0 最高）
-  - System prompt 拼接：`[base] + skill[0].systemPrompt + ... + skill[n].systemPrompt`
-  - 冲突字段（如 `maxWordsPerCard`）以高优先级为准
-  - `imageRefs` 取并集
-  - `appliesTo.stages` 决定 Skill 注入到 plan / edit / image_prompt 哪些阶段
-- **API**：`GET /skills`、`POST /projects/:id/skills`、`DELETE /projects/:id/skills/:id`、`PATCH /projects/:id/skills`（重排）
-
-### 5.4 Image Service（不走 agent · 不走 container）
-
-> MVP-2 已落地（producer + consumer + R2 + opt-in real test），SSE 进度推送延后到 GenJob DO 真实化。
-
-- **模型**：gpt-image-2，Workers 内通过 AIHubMix `/v1` 走 `openai` SDK
-- **实测延迟**（2026-05-04，AIHubMix 通路）：**单图 p50 ≈ 228s（gpt-image-2）**，gpt-image-1 ≈ 40s 作为对照
-- **架构硬约束**：Workers 单请求 30s CPU / 5min wall 上限——9 图同步在 Worker 内不可能。**Queue fan-out 是必需路径**
-- **实体**：`GenJob`、`CardImage`
-- **代码落点**：
-  - `apps/api/src/image/gen-image.ts`：构造 prompt + 调 `images.generate({ model: 'gpt-image-2' })`；`ImageClient` 接口让测试注入 mock
-  - `apps/api/src/image/store-image.ts`：R2 上传 + `CardImage` 行 + ChangeLog；R2 key 约定 `card-images/{genJobId}/{cardId}-v{n}.png`
-  - `apps/api/src/queues/gen-image-consumer.ts`：`processGenImageMessage`（纯函数）+ `handleQueueBatch`（Workers queue 适配）
-  - `apps/api/src/worker.ts`：`export default { fetch, queue: handleQueueBatch }`
-- **流程（整组生成）**：
-  1. `POST /projects/:id/gen-jobs` → 创建 `GenJob` (status=running) + `queue.sendBatch` N 条消息 → 202 `{ job, queued: N }`
-  2. project status → `'generating'`
-  3. Queue consumer (`max_concurrency=3`) 处理每条消息：调 gpt-image-2 → 上传 R2 → 写 `CardImage` + 更新 `card.imageVersionId` + 写 ChangeLog
-  4. 每条处理完调用 `maybeMarkJobDone`：当 project 所有 card 都拿到 image 时，`GenJob.status='done'`
-  5. 客户端通过 `GET /gen-jobs/:id/status` 轮询
-  6. **不做 OCR 校验**：失败由用户在编辑器点"重新生成此卡"触发
-- **超时策略**：Queue consumer 单条消息 `timeout = 6min`（覆盖 gpt-image-2 p95），超时由 wrangler.toml `max_retries=2` 重试，最终入 DLQ `gen-image-jobs-dlq`
-- **R2 URL 约定**：`CardImage.url` 字段当前存 R2 **key**（不是完整 URL）。前端通过 Worker `GET /images/*` 反向代理访问
-- **Prompt 拼接**（实装）：`小红书 4:5 卡片 + 主题 + 主体锚点 + 锁定项 + 画面风格 + 文字布局 + 第N张/角色 + 烧入标题 + 正文`（`buildImagePrompt` in `gen-image.ts`）
-- **缓存键**（设计未实装）：`hash(project_id, card_index, full_prompt)` → `image_url` 存 Workers KV
-- **单卡重生 / 蒙版**：单条 Queue 消息，复用流程（key 用 `-v2.png` 递增）
-- **可选分级**（M1 待评估）：`gpt-image-1`（40s，便宜）作为预览模式，`gpt-image-2`（4min，高质量）作为最终模式
-
-### 5.5 Edit Agent（Workers · ToolLoopAgent · ⌘K）
-
-> MVP-3 已落地（`apps/api/src/agent/edit-agent.ts`）。Workers 内直接 ToolLoopAgent，不走容器池。
-
-- **模型**：Haiku 4.5（首字符 < 1.2s 目标；通过 AIHubMix `/anthropic`）
-- **API**：`POST /cards/:id/edit`，body `{ field: 'title'|'body', instruction: string }` → AI SDK UI Stream
-- **代码落点**：
-  - `apps/api/src/agent/edit-agent.ts`：`buildEditAgent({ model, card, contextCards, field })` 拼 instructions（含当前字段 + 当前值 + 邻近卡片 ±1）
-  - `apps/api/src/agent/tools/propose-edit.ts`：单一 tool；execute **不落库**，只返回 `{ field, newValue, rationale }` 通过 stream 的 tool-result 给前端
-  - `apps/api/src/app.ts`：endpoint 读 card + 邻居 → buildEditAgent → `createAgentUIStreamResponse`
-- **流程**：
-  1. 客户端 POST instruction
-  2. Worker 读 card + 邻居 ±1 作为 contextCards
-  3. ToolLoopAgent 单轮调用 propose_edit，stream 出 diff
-  4. 用户 confirm → 客户端调 `PATCH /cards/:id`（version 乐观锁 + ChangeLog + 触发 reflect Queue）；cancel 不动
-- 三种入口（自由 NLU / 一键候选 / 模板指令）共用同一 endpoint，前端拼好 instruction
-- **stopWhen**：`stepCountIs(3)`——单轮预期，防失控
-- ~~预热 container 池~~ ⚠️ 不需要：Workers 冷启就足够命中 < 1.2s
-
-### 5.6 Suggestion Service（Workers · ToolLoopAgent · 异步）
-
-> MVP-5 已落地（`apps/api/src/agent/suggestion-agent.ts` + 队列分支 in `gen-image-consumer.ts`）。reflect agent 跑在 Queue consumer Worker 内，不再借容器池。
-
-- **模型**：Haiku 4.5（通过 AIHubMix `/anthropic`）
-- **触发**：编辑（`PATCH /cards/:cardId`）/ 重排（`PATCH /projects/:id/cards`）/ 重生（`POST /projects/:id/gen-jobs`）后，Workers 把 `{ projectId, cardId?, trigger }` send 到 `suggestion-reflect` Queue
-- **代码落点**：
-  - `apps/api/src/agent/suggestion-agent.ts`：`runSuggestionReflect(payload, deps)` — agent.generate 跑到完成，工具 execute 是唯一落地通道
-  - `apps/api/src/agent/tools/propose-suggestion.ts`：tool execute 直接 insert into suggestions
-  - `apps/api/src/agent/tools/read-context.ts`：read_project / read_card
-  - `apps/api/src/queues/gen-image-consumer.ts`：`handleQueueBatch` 的 suggestion-reflect 分支构造 deps + 调 runSuggestionReflect
-  - `apps/api/src/app.ts`：`triggerReflect(env, payload)` 在三个 mutation endpoint 末尾调用，best-effort（缺 binding 不抛错）
-- **类型**：`structure` / `platform_sop` / `quality`（Visual System 黄/蓝/紫）
-- **工具**：`read_project` / `read_card` / `propose_suggestion`
-- **实体**：`Suggestion { id, projectId, cardId?, type, message, actionLabel, actionPayload, status, createdAt }`
-- **静默策略**：agent instructions 显式说"如无显著问题不要 propose_suggestion"；让 LLM 自己拒绝。降权（用户忽略 N 次）延后到有 GET/accept/ignore 端点时实装
-- **stopWhen**：`stepCountIs(8)`（read_project + 可选 read_card + 至多 1 propose）
-- **API**（待实装）：`GET /projects/:id/suggestions`、`POST /suggestions/:id/accept`、`POST /suggestions/:id/ignore`
-
-### 5.7 Export Service
-
-- **API**：`POST /projects/:id/export` → 异步任务 → R2 signed URL
-- **内容**：高清 PNG（原尺寸）+ 压缩 PNG，按 `01_cover.png` 命名打 ZIP
-
-### 5.8 ChangeLog（撤回基石）
-
-PRD § 12 强约束：Agent 改动 100% 可逆。
-
-- **实体**：`ChangeLog { id, projectId, actor: 'user'|'agent', target, targetId, action, before, after, createdAt }`
-- 所有 Agent write tool 必须写 ChangeLog；高风险路径需要事务或补偿机制
-- **API**：`POST /changes/:id/undo`
-- **撤回链**：连续撤 N 步，冲突时停在最近一次手动写入
-
----
-
-## 6. 核心数据模型
-
-落到 `packages/shared-types/`，前端 / Workers / Agent tools 共享单一数据源。
-
-```typescript
-type Platform = 'redbook' | 'greenbook';
-type CardRole = 'cover' | 'hook' | 'argument' | 'list' | 'payoff' | 'cta';
-
-interface Project {
-  id: string;
-  userId: string;
-  platform: Platform;            // M1 仅 redbook
-  topic: string;
-  cardCount: number;             // 默认 9
-  aspectRatio: '4:5' | '1:1';
-  language: 'zh' | 'en';
-  tone: string;
-  skillIds: string[];            // 顺序即优先级
-  status: 'draft' | 'planning' | 'generating' | 'editing' | 'exported';
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-interface Card {
-  id: string;
-  projectId: string;
-  index: number;
-  role: CardRole;
-  title: string;
-  body: string;
-  imageVersionId: string | null;
-  userEdited: boolean;
-  locked: boolean;
-  version: number;
-}
-
-interface Skill {
-  id: string;
-  name: string;
-  author: string;
-  category: string[];
-  systemPrompt: string;
-  fewShotExamples: { input: string; output: string }[];
-  imageRefs: string[];
-  outputSchema: {
-    mustHave?: CardRole[];
-    maxWordsPerCard?: number;
-    titleEmojiProb?: number;
-  };
-  appliesTo: { platforms: Platform[]; stages: ('plan'|'edit'|'image_prompt')[] };
-  isOfficial: boolean;
-}
-
-interface GenJob {
-  id: string;
-  projectId: string;
-  status: 'queued' | 'running' | 'partial' | 'done' | 'failed';
-  mainSubject: { description: string; refImages: string[]; locks: ('lighting'|'camera'|'people'|'props')[] };
-  artStyle: string;
-  textLayout: 'top' | 'calligraphy' | 'fullscreen' | 'caption';
-  startedAt: Date;
-  completedAt: Date | null;
-}
-
-interface CardImage {
-  id: string;
-  cardId: string;
-  genJobId: string;
-  version: number;
-  url: string;
-  fullPrompt: string;
-  createdAt: Date;
-}
-
-interface Suggestion {
-  id: string;
-  projectId: string;
-  cardId: string | null;
-  type: 'structure' | 'platform_sop' | 'quality';
-  message: string;
-  actionLabel: string;
-  actionPayload: Record<string, unknown>;
-  status: 'pending' | 'accepted' | 'ignored';
-  createdAt: Date;
-}
-
-interface ChangeLog {
-  id: string;
-  projectId: string;
-  actor: 'user' | 'agent';
-  target: 'card' | 'project' | 'image';
-  targetId: string;
-  action: string;
-  before: unknown;
-  after: unknown;
-  createdAt: Date;
-}
-```
-
----
-
-## 7. 关键流程
-
-### 7.1 Plan 流式生成
-
-```
-Web ──POST /projects/:id/plan──▶ Hono Worker
-                                    │ load project + selected Skills
-                                    │ clear old cards + status=planning
-                                    │ ToolLoopAgent(Sonnet)
-                                    │   └─ create_card tool → cards + ChangeLog
-Web ◀── AI SDK UI Stream ────────── │
-Web ──GET /projects/:id───────────▶ 拉取最终 card snapshot
-```
-
-### 7.2 9 图生成（Queue fan-out）
-
-```
-POST /projects/:id/gen-jobs ─▶ GenJob(running) + N 条 CF Queue 消息
-                                       │
-                  CF Queue (max_concurrency=3)
-                                       │
-                                       ▼ × 3 并发
-                                  gpt-image-2 (openai SDK · in Workers)
-                                       │
-                                       ▼
-                                  R2 上传 + CardImage 落库
-                                       │
-                                       ▼
-                                maybeMarkJobDone
-                                       ▲
-                                       │
-Web ◀──────── GET /gen-jobs/:id/status 轮询
-Web ◀──────── GET /images/card-images/...png 读取 R2 图片
-```
-
-### 7.3 ⌘K 改写
-
-```
-Web ──POST /cards/:id/edit──▶ Worker
-                                    │ read card + neighbors
-                                    │ ToolLoopAgent(Haiku)
-                                    │   └─ propose_edit tool（不落库）
-Web ◀── AI SDK UI Stream ────────── │
-Web ──user confirm──▶ PATCH /cards/:id
-                              │
-                              ▼
-                          ChangeLog + 更新 cards
-```
-
-### 7.4 撤回
-
-```
-POST /changes/:id/undo
-  → 取 ChangeLog.before
-  → 反向写业务表（事务）
-  → 写一条新 ChangeLog（actor=user, action="undo:<原 action>"）
-```
-
----
-
-## 8. M1 实施分阶段
-
-### 阶段 1 · P0 单机贯通
-
-- `apps/api` 用 `wrangler dev` 跑完整 Workers binding；`design` 用 Vite 跑 Studio
-- Neon dev DB；R2 / Queue 用 wrangler binding
-- 实现并验收：Project / Skills / Plan / Image Queue / R2 图片代理 / Export
-- 整条链路：建项目 → Plan 流式 → 拉取 cards → 9 图生成 → 看图 → 导出 ZIP
-
-### 阶段 2 · 编辑器闭环
-
-- 实现 5.5 / 5.6 / 5.8
-- 完整覆盖 PRD § 10 编辑器 + § 12 Agent 行为规范
-
-### 阶段 3 · 产品前端
-
-- 将 `design/` 拆成默认 Studio 应用 + 设计画板模式
-- 用真实 API 契约重做 Entry / Plan / Skills / Image / Editor 页面
-- 补齐 loading、error、empty、version conflict、job retry 等状态
-
-### 阶段 4 · 部署到 Cloudflare
-
-- `apps/api` → Workers；`design` → Pages
-- 配置 Neon / R2 / Queue / AIHubMix secret
-- 内测灰度 + 监控搭建（Cloudflare Analytics + 自建 dashboard）
-
-**总计**：约 6 周
-
----
-
-## 9. 验证策略
-
-对照 PRD 验收清单，每个 P0 验收都先确定测试形态再动手（CLAUDE.md「验证先行」）。
-
-| 验收项 (PRD §) | 验证方式 |
+| 表 | 用途 |
 |---|---|
-| § 06 P0 选平台 → 参数自动调整（12 组合） | 前端 table-driven 单测 |
-| § 06 P0 URL 抓取成功率 ≥ 85% | 50 条 fixture URL 数据集 + CI 跑 |
-| § 07 P0 拖拽重排后 Agent 3s 内回写 | e2e 计时断言（wrangler dev + suggestion-reflect queue） |
-| § 07 P0 撤回 100% 可逆 | 每种 Agent 动作单测 + ChangeLog 完整性测试 |
-| § 09 P0 9 图主体一致 ≥ 4/5（盲评） | 内测人评 + 评分 dashboard |
-| ~~§ 09 P0 中文 OCR ≥ 92%~~ | **改：每周抽 50 张图人工评分，准确率 ≥ 90%**（PRD 同步更新中） |
-| § 09 P0 单图重生不影响其他 | 缓存命中单测 + e2e |
-| § 10 P0 ⌘K 首字符 < 1.2s | p50/p95 上报 → Cloudflare Analytics |
-| § 10 P0 Agent 建议采纳率 ≥ 30% | 埋点 + 周报 |
-| **新增** AI SDK UI Stream 能被前端消费 | mocked e2e + P0 Console 真实 API runbook |
-| **新增** 单图生成 p95 < 6min（gpt-image-2） | Queue consumer 实测打点；超时即记 partial |
-| **新增** 整组 9 图生成 p95 < 15min | GenJob DO 完成时间打点 |
-| **MVP-2** Image pipeline 正确性 | mocked 单测覆盖 producer + consumer 全路径（5 cases）；opt-in 1-image 真实 API 测试（`RUN_REAL_IMAGE_TEST=1`，约 $0.16/run） |
-| **MVP-3** Edit endpoint 不自动落库 | mocked Haiku 单测断言 propose_edit 不改 card row（version 不变） |
-| **MVP-4** Skill 叠加 prompt 优先级 | 5 个 mocked 单测覆盖：默认值、stages 过滤、maxWordsPerCard 优先级、空列表 |
-| **MVP-5** Suggestion reflect 写库 | mocked 单测：propose_suggestion → suggestions 表 row；agent 决定不提建议时不写入 |
+| `decks` | 一套社媒卡片。保存 prompt、mode、卡片数、尺寸、语言、风格设置和状态 |
+| `deck_cards` | deck 下的单张卡。保存标题、要点、版式、渲染快照、图片 prompt/url、锁定状态和 `version` |
+| `generation_jobs` | 生成记录。当前同步完成，保留 status/result/error 以便后续异步化 |
+| `chat_messages` | 对话编辑记录。可绑定整套 deck 或单张 card |
+| `activity_logs` | 审计日志。记录创建、编辑、生成、导出等动作 |
 
-### 9.1 CI 自动化（GitHub Actions）
+乐观锁只在卡片更新上强制要求：`PATCH /decks/:id/cards/:cardId` 必须携带当前 `version`。
 
-`.github/workflows/ci.yml`，`push: main` 与 `pull_request` 触发，两个并行 Job：
+## 5. API 合同
 
-- **typecheck** — `npm ci` + `npm run typecheck`（覆盖所有 workspace）。无 secret 依赖，给出最快反馈。
-- **test (vitest + Neon)** — 跑 `apps/api/test/**`，需要仓库 secret `DATABASE_URL_TEST`（Neon 专用测试分支）。步骤：drizzle-kit migrate（幂等）→ `npm test`。
-  - 因测试间用 `TRUNCATE` 共享同一 Neon 分支，job 配 `concurrency: { group: ci-test, cancel-in-progress: false }` 跨运行串行。
-  - fork PR 自动跳过（拿不到 secret）。
+基础：
 
-`apps/api/test/setup.ts` 同时支持本地（读 `~/.secrets/common.env`）与 CI（读 `process.env`），无需切换。
+- `GET /health`
+- `GET /decks?userId=demo-user`
+- `POST /decks`
+- `GET /decks/:id`
+- `PATCH /decks/:id`
 
----
+大纲与卡片：
 
-## 10. 风险与缓解
+- `POST /decks/:id/outline`
+- `POST /decks/:id/cards`
+- `PATCH /decks/:id/cards/:cardId`
+- `DELETE /decks/:id/cards/:cardId`
+- `PATCH /decks/:id/cards/reorder`
 
-| 风险 | 缓解 |
+生成、对话、导出：
+
+- `POST /decks/:id/generate`
+- `GET /decks/:id/generations`
+- `POST /decks/:id/chat`
+- `GET /decks/:id/chat`
+- `POST /decks/:id/chat/apply`
+- `POST /decks/:id/export`
+
+## 6. 前端集成策略
+
+`apps/web` 已经接入 API，每一步与后端的对应关系如下：
+
+| 页面 | 触发 | 后端调用 |
+|---|---|---|
+| 输入 (PageInput) | "开始生成" | `POST /decks` （生成大纲，可能 5–15s） |
+| 大纲 (PageOutline) | 编辑标题 / bullets / layout | `PATCH /decks/:id/cards/:cardId`（debounce 600ms，乐观锁 version） |
+| 大纲 | 加 / 删 / 重排 | `POST /decks/:id/cards`、`DELETE /decks/:id/cards/:cardId`、`PATCH /decks/:id/cards/reorder` |
+| 大纲 | "重新生成大纲" | `POST /decks/:id/outline` |
+| 风格 (PageStyle) | mode / template / theme / density / lang / size / count | `PATCH /decks/:id`（debounce 700ms，统一在 `useDeckSettingsSync` hook 里走） |
+| 生成 (PageLoading) | 进入页面 | `POST /decks/:id/generate`，返回的 snapshot 同步本地 |
+| 工作台 (PageStudio) | 进入 | `GET /decks/:id/chat` 拉历史 |
+| 工作台 | 发送消息 | `POST /decks/:id/chat`（actions 由后端 stub 给出） |
+| 工作台 | 应用 action | `POST /decks/:id/chat/apply` |
+| 工作台 | 直接编辑 | 经 PageStudio 的卡片调度器走 `PATCH /decks/:id/cards/:cardId` |
+| 工作台 | 下载 | `POST /decks/:id/export`，把返回的 manifest 触发本地下载 |
+
+前端集成层位置：
+
+- `apps/web/src/lib/api.ts` —— `fetch` 封装 + `ApiError`，`API_BASE` 取自 `VITE_API_URL`（兼容 `VITE_API_BASE`）。
+- `apps/web/src/lib/adapters.ts` —— 字段口径映射（lang ⇄ language、size ⇄ aspectRatio、card row ⇄ FrontendCard）。
+- `apps/web/src/lib/state.ts` —— `AppState` 类型、`buildDeckUpdatePayload`、`snapshotToStatePatch`、`humanizeApiError`、`chatTargetLabel`，纯函数可单测。
+- `apps/web/src/lib/user-id.ts` —— 客户端 UUID。
+
+前端不应直接理解旧 API 概念，也不应引入 `project`、`skill`、`suggestion` 等旧命名。
+
+## 7. 客户端身份
+
+当前不接账号系统。`userId` 由前端首次访问时生成 UUID 并写入 `localStorage['vcard-user-id']`，所有 API 请求显式携带：
+
+- `POST /decks` 请求体必须含 `userId` (UUID)。
+- `GET /decks?userId=...` 必填。
+- DB 列 `decks.user_id` 仍保留 `'demo-user'` 默认值作兜底，不依赖。
+
+后续接入真实账号系统时，从 JWT / session 派发 `userId`，并补齐所有 handler 的 deck 归属断言（当前未做，仅适合可信 demo 环境）。
+
+## 8. 现状与扩展点
+
+### 已实现
+
+- **图像生成（方案 A：数据库 + waitUntil 后台任务）**：`apps/api/src/image/gen-image.ts` + `apps/api/src/app.ts` 的异步 generate handler。
+  - HTTP handler 写好 `generation_jobs.result.cardJobs[]`（每张 status=queued）后立即返回 202 + jobId，不阻塞响应。
+  - 后台 `runImageJob` 通过 `runInBackground`（Workers 用 `ctx.waitUntil`，Node 用 fire-and-forget）以 `IMAGE_CONCURRENCY=3` 并发跑卡片。
+  - 进度通过 `markCardJobStatus` 用 PostgreSQL `jsonb_set`/`jsonb_array_elements` **原子重写** `cardJobs` 数组，避免并发 read-modify-write 的 lost update。
+  - `generateCardImage` 三条 provider 路径：优先 `AIHUBMIX_API_KEY`（baseURL `https://aihubmix.com/v1`，与 outline / chat 共用同一 key 与计费账户），其次 `OPENAI_API_KEY`（直连），都没有则返回 base64-encoded SVG data URL 占位（带渐变 + 卡片信息），方便端到端测试与本地开发。
+  - 单卡失败不阻塞其它卡；job 最终 status 是 `done`（全部成功）或 `failed` + `error: 'partial_failure'`。
+  - 前端 `PageLoading` 1.5s 轮询 `GET /decks/:id/generations/:jobId`，进度条实时反映完成数。
+  - **测试钩子**：`flushBackgroundTasks()` 让测试可以等所有 in-flight 后台 promise 跑完。
+- **LLM 大纲生成**：`apps/api/src/llm/outline.ts` 调用 `claude-sonnet-4-6`（via AIHubMix Anthropic-native baseURL `https://aihubmix.com`）。
+  - 自定义 `web_search` 工具，execute 调用 Tavily Search API。
+  - `AIHUBMIX_API_KEY` 缺失时，`POST /decks` 与 `POST /decks/:id/outline` 自动回退本地模板（带 warn 日志），保证开发与测试不被卡死。
+  - `TAVILY_API_KEY` 缺失时，模型仍可生成大纲，仅失去时效性搜索能力。
+  - 结构化输出：模型最后一条消息输出 JSON，服务端用 `extractJsonObject` + zod schema 解析校验。
+- **LLM 对话编辑**：`apps/api/src/llm/chat.ts` 同样走 `claude-sonnet-4-6`。
+  - 复用 `voice-tone` / `anti-slop` / `structural-rules` 三份 skill 作为 system prompt（与大纲生成同源）。
+  - 输出 JSON `{ body, actions[] }`，actions kind 限定 `title | bullet | tone`，每种最多 1 条。
+  - 缺 `AIHUBMIX_API_KEY` 或解析失败时回退到 `localChatReply` stub。
+- **多卡组切换**：前端 TopNav `DeckPicker` 拉 `GET /decks?userId=`，可在不同卡组之间切换；切换时调 `GET /decks/:id` 全量同步。
+- **草稿 hydration**：App mount 时若本地草稿带 `deckId`，先 `GET /decks/:id` 用后端 snapshot 校准本地（404 时清掉草稿）。
+
+### 后续扩展点
+
+- 平台发布：在 export 之后新增 publish job，不污染 deck/card 核心模型。
+- 账号系统 + 多租户隔离：替换客户端 UUID 方案为真实鉴权，并在所有 handler 添加 `deck.userId` 归属断言。
+- 流式 chat / outline：把同步 `generateText` 换成 `streamText`，前端边出边显示。
+
+## 10. 上线前必做：图像生成迁到 Queue + Durable Object
+
+当前方案 A 是**功能可用、可端到端验证**的最小实现，但**不能直接上生产**。Cloudflare Workers 单次请求的 wall-time 上限（付费版约 30 分钟，免费版 30s）会在以下场景失效：
+
+| 触发条件 | 现象 |
 |---|---|
-| ~~Cloudflare Containers 仍在演进~~ | ⚠️ 已消除（M1 不用容器，见 §0.1） |
-| ~~Pi 是个人项目，长期维护风险~~ | ⚠️ 已消除（M1 不用 Pi，见 §0.1） |
-| ~~Pi sessions 默认本地存储~~ | ⚠️ 已消除（M1 用 ToolLoopAgent，会话历史直接由前端 `useChat` 持有，服务端无状态） |
-| ~~Container 池预热成本~~ | ⚠️ 已消除 |
-| ~~Pi 流式 JSON 解析容错~~ | ⚠️ 已消除（AI SDK 处理 stream 解析） |
-| ~~Workers CPU 时间限~~ | ⚠️ 已确认非问题：`await fetch` 不计 CPU；Plan/Edit/Suggest 全部在 5min wall 内 |
-| **AI SDK 6 仍在 0.x → 1.0 演进** | 锁版本 `^6.0.x`；CI 跑契约测试（mock model + 真 SDK）防破坏性升级 |
-| **多 turn 历史 token 膨胀** | 客户端 `useChat` 历史无限增长 → 服务端做最大 N 轮裁剪；Anthropic prompt cache 命中率 |
-| gpt-image-2 中文 ~90%，无 OCR 兜底 | 编辑器"重新生成此卡"按钮显眼；prompt 工程加强（位置 / 字号约束写进阶段 prompt） |
-| 主体一致性脸部翻车 | M1 默认关闭 lock_people（PRD 已规定） |
-| gpt-image-2 限频 | CF Queues `max_concurrency=3` + 指数退避；多账号轮询作为后置 |
-| 撤回链失效 | 所有 Agent 写 tool 走 ChangeLog；e2e 覆盖每种动作 |
-| 多 Skill 叠加 prompt 爆 token | 每个 Skill `systemPrompt` 限 800 token；超限截断尾部 + 监控告警 |
-| Suggestion 噪声打扰用户 | 同会话最多 5 条（PRD § 12）+ 忽略 3 次降权 |
+| 单张 gpt-image-1 / gpt-image-2 跑 ~30s × 7 张串行 ≈ 3.5 min | 接近 wall-time 上限，单卡卡住整个 worker |
+| 多用户同时点"生成" | Workers 没有 Queue 削峰，下游被打爆，rate-limit |
+| Worker 中途被 Cloudflare 强杀 / 进程崩溃 | in-flight 卡片彻底丢失，没有自动重试 |
+| 用户刷新页面 | 后台 fire-and-forget promise 还在跑，但用户切到别的 deck 后无法收到完成通知（需要轮询数据库） |
 
----
+**触发时机：以下任一成立时启动改造**
 
-## 11. 里程碑映射
+- 接入真实 OpenAI 图像 API（不再用 SVG 占位），单卡延迟 > 10s。
+- 实际用户量 > 10 个，或并发生成请求 > 3 个/分钟。
+- 出现 in-flight job 因为 worker 被回收而永久 stuck 的报错。
 
-| 里程碑 | 内容 | 前向兼容关键 |
-|---|---|---|
-| **M1** (~6 周) | § 1 范围内的所有功能 | — |
-| M2 | 小绿书 platform；Skill 自建 + 市场 CRUD；完整 Suggestion | `Project.platform` 已建模；Skill schema 支持市场字段 |
-| M3 | OAuth 直发；跨平台改版 | 跨平台改版本质是新 GenJob，复用 Image Service |
-| M4 | 公众号长图文 / 抖音 9:16 / 微博 | `aspectRatio` + `cardCount` 已参数化 |
+**改造步骤**
 
----
+1. **绑定 Cloudflare Queue + Durable Object + R2**：在 `apps/api/wrangler.toml` 加 `[[queues.producers]]` / `[[queues.consumers]]` / `[[durable_objects.bindings]]` / `[[r2_buckets]]`。
+2. **新建 `apps/api/src/queues/gen-image-consumer.ts`**：Queue consumer，每条消息 = 一张卡的生成任务。Consumer 内部调 `generateCardImage`，结果上传 R2，写回 `deck_cards.image_url`，并 RPC 通知对应的 DO 更新进度。
+3. **新建 `apps/api/src/do/gen-job.ts`**（Durable Object）：每个 `generationJob` 对应一个 DO 实例。负责：
+   - 串行化 `cardJobs` 进度写入（替代当前 jsonb 原子 SQL，DO 内单线程更简单可靠）；
+   - 对外提供 WebSocket / SSE 端点给前端订阅实时进度；
+   - 全部完成时把 deck.status 从 `generating` 切到 `ready` 或 `styled`（partial）；
+   - 用 `state.storage.setAlarm(...)` 做 1 小时超时清理（标记 stuck job 为 failed 让用户重发）。
+4. **改 `app.ts` 的 generate handler**：image mode 时用 `env.GEN_IMAGE_QUEUE.sendBatch(...)` 替代 `runInBackground`，立即返回 202。整个 handler ≤ 1s。
+5. **R2 替代 data URL**：`generateCardImage` 返回 base64 → R2 上传 → 写持久 URL。`deck_cards.image_url` 不再存巨量 base64。
+6. **前端 `PageLoading`**：把 1.5s HTTP 轮询升级为 WebSocket / SSE，连到 DO 端点，事件驱动。
 
-## 12. 仓库结构（monorepo · pnpm workspaces）
+**估算**：1.5–2 天，主要在 wrangler binding 接通和 DO 状态机的边界条件。
 
-```
-VCard/
-├── apps/
-│   └── api/                # Hono on Workers (wrangler.toml)
-│       ├── src/
-│       │   ├── agent/      # Plan / Edit / Suggestion ToolLoopAgent
-│       │   ├── image/      # gpt-image-2 prompt + R2 store
-│       │   ├── do/         # M2+ deferred DO skeletons / GenJob fan-out placeholder
-│       │   └── queues/     # Queue consumers
-├── sandbox/
-│   ├── agent-base/         # 历史 sandbox spike，M1 不使用
-│   └── bench/              # 冷启动 / 延迟 benchmark
-├── packages/
-│   ├── shared-types/       # Project / Card / Skill 等 TS 接口
-├── design/                 # Studio 前端 + 设计画板
-├── docs/
-│   └── tech-design.md      # 本文件
-├── package.json
-└── package-lock.json
+**保留的迁移友好点**
+
+- `generation_jobs.result.cardJobs[]` 数据结构与 DO 内部进度状态机一致，迁移时 DO 启动可从数据库 hydrate。
+- `runInBackground` 已经把 Cloudflare 与 Node 路径解耦，迁到 Queue 时只需在 Cloudflare 路径换实现，Node 本地开发仍可用 fire-and-forget 跑通端到端。
+- `generateCardImage` 的两条路径（OpenAI / 占位）保留，CI / 离线开发不依赖外部 API。
+
+## 9. 验证
+
+当前必须保持以下命令通过：
+
+```bash
+npm run typecheck
+npm test
+npm run build
 ```
 
----
+测试覆盖：
 
-## 13. 开放问题
-
-- **PRD § 09 文字烧入校验**：原 "OCR ≥ 92%" 改为"人评抽样 ≥ 90%"，需 PRD 文件同步更新
-- **M1 内置 3 个 Skill 的 prompt 文案**：需运营 / 文案合作给定式
-- **用户体系**：Cloudflare Access / Clerk / 自建 magic link 三选一
-- **直发 OAuth 白名单**（M3 议题）：小红书 / 公众号开放接口需提前申请
-
----
-
-## 修订记录
-
-| 日期 | 变更 | 来源 |
-|---|---|---|
-| 2026-05-03 | 初稿 | Issue #1 |
-| 2026-05-04 | § 5.4 加 gpt-image-2 实测延迟 228s/图 + 12min 整组 + 6min 超时；§ 9 增加单图/整组延迟验收线 | AIHubMix 实测 |
-| 2026-05-04 | **§ 0.1 架构修订**：放弃 CF Containers + Pi SDK，改用 Workers + Vercel AI SDK `ToolLoopAgent`；§3 架构图前置 deferred 横幅；§4 整段 deferred；§5.2/5.3/5.5/5.6 流程重写；§10 风险表汰换 6 行 | MVP-1 落地 + 风险评估 |
-| 2026-05-04 | **MVP-2 image pipeline**：§5.4 重写为 producer + consumer 实装；新增 §9 验收行（mocked + opt-in real-API 测试策略）；R2 key 约定 `card-images/{genJobId}/{cardId}-v{n}.png`；客户端轮询 `/gen-jobs/:id/status`，SSE 推送延后 | MVP-2 落地 |
-| 2026-05-04 | 清理 M1 主线：移除正文中的容器流程，补充 `/images/*` R2 代理与前端 P0 轮询契约 | 前端闭环对齐 |
-| 2026-05-04 | **MVP-3+4+5 三件套**：§5.5 Edit 实装（propose_edit 不落库）；§5.3 Skills 叠加 prompt 实装（buildPlanInstructions 拼接）；§5.6 Suggestion 异步 reflect 实装（reflect agent 在 suggestion-reflect Queue 分支运行）；§9 增加 3 行 MVP-3/4/5 验收 | MVP-3 + MVP-4 + MVP-5 落地 |
+- **API**（`apps/api/test`，59 个）：
+  - `app.test.ts` —— deck 创建、卡片乐观锁、大纲替换、html / image 两条 generate 路径、聊天动作应用、导出 manifest。
+  - `app.errors.test.ts` —— 健康检查、`GET /decks?userId=` 列表、404 / 400 / 409 错误路径、deck PATCH 合并、card 增删 / reorder / version 校验、chat apply 三种 action、generate 边界。
+  - `llm-outline.test.ts` —— 大纲生成 + slop 过滤。
+  - `chat.test.ts` —— LLM chat reply 解析、fence 处理、zod 校验、空 actions 拒绝。
+  - `gen-image.test.ts` —— `composePrompt`、`buildPlaceholderDataUrl` 的 SVG 输出 / XML 转义 / 调色板差异、`generateCardImage` 占位回退。
+  - `image-job.test.ts` —— 异步 image generate 端到端：202 立返、`GET /generations/:jobId` 进度查询、`flushBackgroundTasks` 后所有卡片有 imageUrl、按 cardIds 局部重生成。
+- **Web**（`apps/web/src/lib`，36 个）：
+  - `adapters.test.ts` —— 语言 / 比例 / card / settings 双向映射。
+  - `api.test.ts` —— mock fetch 验证每个端点的 method / 路径 / 序列化和 ApiError 包装，含 `getGenerationJob`。
+  - `state.test.ts` —— `buildDeckUpdatePayload`、`snapshotToStatePatch`、`chatTargetLabel`、`currentDeckTitle`、`computeImageJobProgress`、`humanizeApiError` 纯函数。
+  - `integration.test.ts` —— `createDeck → snapshotToStatePatch → buildDeckUpdatePayload` 完整链路。

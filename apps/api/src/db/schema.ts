@@ -1,228 +1,144 @@
-import {
-  pgTable,
-  pgEnum,
-  text,
-  integer,
-  boolean,
-  timestamp,
-  jsonb,
-  uuid,
-  index,
-  uniqueIndex,
-  type AnyPgColumn,
-} from 'drizzle-orm/pg-core';
+import { boolean, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import type {
-  CardRole,
-  MainSubject,
-  SkillAppliesTo,
-  SkillFewShot,
-  SkillOutputSchema,
+  ActivityActor,
+  ActivityTarget,
+  AspectRatio,
+  CardLayout,
+  ChatAction,
+  ChatRole,
+  DeckMode,
+  DeckSettings,
+  DeckStatus,
+  GenerationStatus,
+  Language,
 } from '@vcard/shared-types';
 
-export const platformEnum = pgEnum('platform', ['redbook', 'greenbook']);
-export const cardRoleEnum = pgEnum('card_role', [
-  'cover',
-  'hook',
-  'argument',
-  'list',
-  'payoff',
-  'cta',
-]);
-export const aspectRatioEnum = pgEnum('aspect_ratio', ['4:5', '1:1']);
-export const languageEnum = pgEnum('language', ['zh', 'en']);
-export const projectStatusEnum = pgEnum('project_status', [
-  'draft',
-  'planning',
-  'generating',
-  'editing',
-  'exported',
-]);
-export const genJobStatusEnum = pgEnum('gen_job_status', [
-  'queued',
-  'running',
-  'partial',
-  'done',
-  'failed',
-]);
-export const textLayoutEnum = pgEnum('text_layout', [
-  'top',
-  'calligraphy',
-  'fullscreen',
-  'caption',
-]);
-export const suggestionTypeEnum = pgEnum('suggestion_type', [
-  'structure',
-  'platform_sop',
-  'quality',
-]);
-export const suggestionStatusEnum = pgEnum('suggestion_status', [
-  'pending',
-  'accepted',
-  'ignored',
-]);
-export const changeActorEnum = pgEnum('change_actor', ['user', 'agent']);
-export const changeTargetEnum = pgEnum('change_target', ['card', 'project', 'image']);
+export const deckModeEnum = pgEnum('deck_mode', ['html', 'image']);
+export const deckStatusEnum = pgEnum('deck_status', ['draft', 'outlined', 'styled', 'generating', 'ready', 'exported']);
+export const aspectRatioEnum = pgEnum('aspect_ratio', ['1:1', '4:5', '9:16']);
+export const languageEnum = pgEnum('language', ['zh-CN', 'zh-TW', 'en', 'ja']);
+export const cardLayoutEnum = pgEnum('card_layout', ['cover', 'list', 'quote', 'stat', 'closer']);
+export const generationStatusEnum = pgEnum('generation_status', ['queued', 'running', 'done', 'failed']);
+export const chatRoleEnum = pgEnum('chat_role', ['user', 'assistant']);
+export const activityActorEnum = pgEnum('activity_actor', ['user', 'assistant', 'system']);
+export const activityTargetEnum = pgEnum('activity_target', ['deck', 'card', 'generation', 'chat']);
 
-export const projects = pgTable(
-  'projects',
+export const decks = pgTable(
+  'decks',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    userId: text('user_id').notNull(),
-    platform: platformEnum('platform').notNull().default('redbook'),
-    topic: text('topic').notNull(),
-    cardCount: integer('card_count').notNull().default(9),
-    aspectRatio: aspectRatioEnum('aspect_ratio').notNull().default('4:5'),
-    language: languageEnum('language').notNull().default('zh'),
-    tone: text('tone').notNull().default('native'),
-    skillIds: jsonb('skill_ids').$type<string[]>().notNull().default([]),
-    status: projectStatusEnum('status').notNull().default('draft'),
+    userId: text('user_id').notNull().default('demo-user'),
+    title: text('title').notNull().default('Untitled deck'),
+    prompt: text('prompt').notNull(),
+    mode: deckModeEnum('mode').$type<DeckMode>().notNull().default('html'),
+    cardCount: integer('card_count').notNull().default(7),
+    aspectRatio: aspectRatioEnum('aspect_ratio').$type<AspectRatio>().notNull().default('4:5'),
+    language: languageEnum('language').$type<Language>().notNull().default('zh-CN'),
+    settings: jsonb('settings').$type<DeckSettings>().notNull(),
+    status: deckStatusEnum('status').$type<DeckStatus>().notNull().default('draft'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    userIdx: index('projects_user_id_idx').on(t.userId),
+    userUpdatedIdx: index('decks_user_updated_idx').on(t.userId, t.updatedAt),
+    statusIdx: index('decks_status_idx').on(t.status),
   }),
 );
 
-export const cards = pgTable(
-  'cards',
+export const deckCards = pgTable(
+  'deck_cards',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    projectId: uuid('project_id')
+    deckId: uuid('deck_id')
       .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
+      .references(() => decks.id, { onDelete: 'cascade' }),
     index: integer('index').notNull(),
-    role: cardRoleEnum('role').notNull(),
     title: text('title').notNull().default(''),
-    body: text('body').notNull().default(''),
-    // Forward ref to cardImages (declared below). ON DELETE SET NULL so that
-    // deleting an image row nulls out the pointer instead of cascading-deleting
-    // the card. Cycle is safe because the reverse direction (cardImages.cardId)
-    // uses ON DELETE CASCADE. AnyPgColumn return type breaks the TS circularity
-    // (cards → cardImages → cards via FKs).
-    imageVersionId: uuid('image_version_id').references((): AnyPgColumn => cardImages.id, {
-      onDelete: 'set null',
-    }),
+    bullets: jsonb('bullets').$type<string[]>().notNull().default([]),
+    layout: cardLayoutEnum('layout').$type<CardLayout>().notNull().default('list'),
+    note: text('note'),
+    render: jsonb('render').$type<Record<string, unknown>>().notNull().default({}),
+    imagePrompt: text('image_prompt'),
+    imageUrl: text('image_url'),
     userEdited: boolean('user_edited').notNull().default(false),
     locked: boolean('locked').notNull().default(false),
     version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    projectIdx: index('cards_project_id_index_idx').on(t.projectId, t.index),
-    imageVersionIdx: index('cards_image_version_id_idx').on(t.imageVersionId),
+    deckIndexIdx: index('deck_cards_deck_index_idx').on(t.deckId, t.index),
   }),
 );
 
-export const skills = pgTable('skills', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: text('name').notNull(),
-  author: text('author').notNull(),
-  category: jsonb('category').$type<string[]>().notNull().default([]),
-  systemPrompt: text('system_prompt').notNull(),
-  fewShotExamples: jsonb('few_shot_examples').$type<SkillFewShot[]>().notNull().default([]),
-  imageRefs: jsonb('image_refs').$type<string[]>().notNull().default([]),
-  outputSchema: jsonb('output_schema').$type<SkillOutputSchema>().notNull().default({}),
-  appliesTo: jsonb('applies_to').$type<SkillAppliesTo>().notNull(),
-  isOfficial: boolean('is_official').notNull().default(false),
-});
-
-export const genJobs = pgTable(
-  'gen_jobs',
+export const generationJobs = pgTable(
+  'generation_jobs',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    projectId: uuid('project_id')
+    deckId: uuid('deck_id')
       .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
-    status: genJobStatusEnum('status').notNull().default('queued'),
-    mainSubject: jsonb('main_subject').$type<MainSubject>().notNull(),
-    artStyle: text('art_style').notNull().default(''),
-    textLayout: textLayoutEnum('text_layout').notNull().default('top'),
-    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+      .references(() => decks.id, { onDelete: 'cascade' }),
+    mode: deckModeEnum('mode').$type<DeckMode>().notNull(),
+    status: generationStatusEnum('status').$type<GenerationStatus>().notNull().default('queued'),
+    requested: jsonb('requested').$type<Record<string, unknown>>().notNull().default({}),
+    result: jsonb('result').$type<Record<string, unknown>>().notNull().default({}),
+    error: text('error'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),
-  },
-  (t) => ({
-    projectStatusIdx: index('gen_jobs_project_status_idx').on(t.projectId, t.status),
-  }),
-);
-
-export const cardImages = pgTable(
-  'card_images',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    cardId: uuid('card_id')
-      .notNull()
-      .references(() => cards.id, { onDelete: 'cascade' }),
-    genJobId: uuid('gen_job_id')
-      .notNull()
-      .references(() => genJobs.id, { onDelete: 'cascade' }),
-    version: integer('version').notNull().default(1),
-    url: text('url').notNull(),
-    fullPrompt: text('full_prompt').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    cardIdx: index('card_images_card_id_idx').on(t.cardId),
-    cardGenVersionUnique: uniqueIndex('card_images_card_gen_version_unique').on(
-      t.cardId,
-      t.genJobId,
-      t.version,
-    ),
+    deckCreatedIdx: index('generation_jobs_deck_created_idx').on(t.deckId, t.createdAt),
+    statusIdx: index('generation_jobs_status_idx').on(t.status),
   }),
 );
 
-export const suggestions = pgTable(
-  'suggestions',
+export const chatMessages = pgTable(
+  'chat_messages',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    projectId: uuid('project_id')
+    deckId: uuid('deck_id')
       .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
-    cardId: uuid('card_id').references(() => cards.id, { onDelete: 'cascade' }),
-    type: suggestionTypeEnum('type').notNull(),
-    message: text('message').notNull(),
-    actionLabel: text('action_label').notNull(),
-    actionPayload: jsonb('action_payload').$type<Record<string, unknown>>().notNull(),
-    status: suggestionStatusEnum('status').notNull().default('pending'),
+      .references(() => decks.id, { onDelete: 'cascade' }),
+    cardId: uuid('card_id').references(() => deckCards.id, { onDelete: 'set null' }),
+    role: chatRoleEnum('role').$type<ChatRole>().notNull(),
+    body: text('body').notNull(),
+    actions: jsonb('actions').$type<ChatAction[]>().notNull().default([]),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    projectStatusIdx: index('suggestions_project_status_idx').on(t.projectId, t.status),
+    deckCreatedIdx: index('chat_messages_deck_created_idx').on(t.deckId, t.createdAt),
+    cardIdx: index('chat_messages_card_idx').on(t.cardId),
   }),
 );
 
-export const changeLogs = pgTable(
-  'change_logs',
+export const activityLogs = pgTable(
+  'activity_logs',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    projectId: uuid('project_id')
+    deckId: uuid('deck_id')
       .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
-    actor: changeActorEnum('actor').notNull(),
-    target: changeTargetEnum('target').notNull(),
-    targetId: uuid('target_id').notNull(),
+      .references(() => decks.id, { onDelete: 'cascade' }),
+    actor: activityActorEnum('actor').$type<ActivityActor>().notNull(),
+    target: activityTargetEnum('target').$type<ActivityTarget>().notNull(),
+    targetId: uuid('target_id'),
     action: text('action').notNull(),
     before: jsonb('before'),
     after: jsonb('after'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    projectCreatedIdx: index('change_logs_project_created_idx').on(t.projectId, t.createdAt),
+    deckCreatedIdx: index('activity_logs_deck_created_idx').on(t.deckId, t.createdAt),
   }),
 );
 
-export type ProjectRow = typeof projects.$inferSelect;
-export type ProjectInsert = typeof projects.$inferInsert;
-export type CardRow = typeof cards.$inferSelect;
-export type CardInsert = typeof cards.$inferInsert;
-export type SkillRow = typeof skills.$inferSelect;
-export type SkillInsert = typeof skills.$inferInsert;
-export type GenJobRow = typeof genJobs.$inferSelect;
-export type GenJobInsert = typeof genJobs.$inferInsert;
-export type CardImageRow = typeof cardImages.$inferSelect;
-export type CardImageInsert = typeof cardImages.$inferInsert;
-export type SuggestionRow = typeof suggestions.$inferSelect;
-export type SuggestionInsert = typeof suggestions.$inferInsert;
-export type ChangeLogRow = typeof changeLogs.$inferSelect;
-export type ChangeLogInsert = typeof changeLogs.$inferInsert;
-
-export type { CardRole };
+export type DeckRow = typeof decks.$inferSelect;
+export type DeckInsert = typeof decks.$inferInsert;
+export type DeckCardRow = typeof deckCards.$inferSelect;
+export type DeckCardInsert = typeof deckCards.$inferInsert;
+export type GenerationJobRow = typeof generationJobs.$inferSelect;
+export type GenerationJobInsert = typeof generationJobs.$inferInsert;
+export type ChatMessageRow = typeof chatMessages.$inferSelect;
+export type ChatMessageInsert = typeof chatMessages.$inferInsert;
+export type ActivityLogRow = typeof activityLogs.$inferSelect;
+export type ActivityLogInsert = typeof activityLogs.$inferInsert;

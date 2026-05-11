@@ -1,0 +1,4 @@
+interface:
+  display_name: "Text Card Generator"
+  short_description: "Create consistent shareable card image sets via HTML/CSS + Playwright"
+  default_prompt: "Use $text-card-generator to turn this content into a polished shareable card image set."

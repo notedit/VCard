@@ -13,7 +13,7 @@ try {
 
 const children = [
   run('api', 'npm', ['run', 'dev:wrangler', '--workspace', '@vcard/api']),
-  run('web', 'npm', ['run', 'dev', '--workspace', 'vcard-design', '--', '--host', '127.0.0.1'], {
+  run('web', 'npm', ['run', 'dev', '--workspace', '@vcard/web', '--', '--host', '127.0.0.1'], {
     VITE_API_BASE: 'http://localhost:8787',
   }),
 ];

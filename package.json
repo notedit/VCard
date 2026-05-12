@@ -19,5 +19,8 @@
     "dev:vars": "node scripts/sync-dev-vars.mjs",
     "typecheck": "npm run -ws typecheck",
     "test": "npm run -ws test"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
   }
 }

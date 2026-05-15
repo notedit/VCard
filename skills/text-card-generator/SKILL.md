@@ -81,22 +81,21 @@ When the input is ambiguous, ask one clarifying question ("这段内容是要直
 Ask for missing generation parameters once near the start, before concept planning. Treat "Ask User Questions" as a portable decision policy, not a requirement to call a specific tool. Different coding agents expose different interaction primitives, so the skill must work when structured question tools are present, absent, or discouraged by the agent's operating mode.
 
 - First extract known values for `content`, `ratio`, `count`, `theme/style`, `platform/audience`, and `output/constraints`.
-- Prefer inference over interruption when defaults are low-risk. For Codex-style execution agents, if the user asks to "帮我做 / 生成 / 制作 / 直接出图 / quickly export", choose reasonable defaults and proceed.
-- Ask only when the answer materially changes the output and cannot be safely inferred. Priority order: `content/source intent`, `ratio`, `count`, `theme/style`, `platform/audience`, `output/constraints`.
+- Ask the user to confirm generation parameters before planning whenever any meaningful choice is still missing. Do this even when the user says "帮我做 / 生成 / 制作 / 直接出图 / quickly export"; those phrases request execution, not silent parameter inference.
+- Ask when the answer materially changes the output. Priority order: `content/source intent`, `ratio`, `count`, `theme/style`, `platform/audience`, `output/constraints`.
 - Ask at most 3 concise questions by default. Use up to 5 only when the user explicitly wants configuration choices or the output is high-stakes.
 - Do not ask again for parameters that are already explicit in the user's original request.
-- Skip the question step when the user says to proceed directly, not ask questions, quickly export, or otherwise clearly prioritizes speed. In that case, use defaults and state the assumptions briefly before or during execution.
+- Skip the question step only when the user explicitly says not to ask questions or explicitly approves default parameters. In that case, use defaults and state the assumptions briefly before or during execution.
 
-### Agent Compatibility
+### Compatibility Strategy
 
-Use the best available question mechanism for the current coding agent:
+Use the current environment's best available question mechanism:
 
-- If a structured question tool is available, use it for true blockers only. Offer 2-3 mutually exclusive choices and make the recommended choice first. Do not use it for every optional preference.
-- If no structured question tool is available, ask a short plain-language question in chat only when blocked. Keep it to one message, preferably one question.
-- If the agent mode is autonomous, default/execution-first, or approval-light, do not stop for style preferences. State a compact assumption such as "我按 9:16、5 张、技术杂志风来做" and continue.
-- If the agent mode is planning, review-only, or explicitly asks for confirmation gates, present options and wait before coding.
-- Do not reference agent-specific tool names in card output or user-facing copy. The skill should work across Codex, Claude Code, Cursor, Windsurf, Roo, and similar file-editing agents.
-- Never ask questions that are only implementation details for the agent, such as which renderer to use, unless the user has constrained the environment.
+- If the environment supports `ask_user_question`, `ask question`, or an equivalent native clarification capability, use that native interaction to clarify blocking questions.
+- If the environment does not support a native question capability, ask directly in normal conversation.
+- Ask at most 2-5 questions at a time.
+- If missing information does not block the task, still ask once for confirmation of the parameters that affect the final output. If the user has already approved defaults or asked for no questions, make reasonable assumptions and continue.
+- Explicitly list important assumptions in the final response, `sources.md`, or `credits.md`.
 
 ### Stop Conditions
 
@@ -108,7 +107,7 @@ Stop and ask before generation only when one of these is true:
 - The visual direction is governed by brand, legal, accessibility, or exact-copy constraints that are missing.
 - Research finds contested facts that would change the core claim.
 
-Otherwise, proceed with documented assumptions and record them in `sources.md` or the final response.
+Otherwise, ask once for confirmation of meaningful generation parameters, then proceed with documented assumptions and record them in `sources.md` or the final response.
 
 ### Ratio Question
 
@@ -133,7 +132,14 @@ When auto-recommending, choose the smallest set that covers the idea without cro
 
 ### Theme Question
 
-Do not expose the full preset catalog directly to the user. Load `references/themes/presets.md` and, when visual direction matters, `references/design-languages.md`; then recommend 2-3 scenario-based style options based on the content, platform, audience, and sharing goal. Map the user's chosen scenario to the final theme preset and design-language combination internally.
+Do not expose the full preset catalog directly to the user. Load `references/themes/presets.md` and, when visual direction matters, `references/design-languages.md`; then recommend 3-5 scenario-based style options based on the content, platform, audience, and sharing goal. Map the user's chosen scenario to the final theme preset and design-language combination internally.
+
+When asking the user to choose a style, do not present only one recommendation plus a vague "or change it?" question. Give 3-5 concrete options, each with:
+
+- a short user-facing style name;
+- the situation where it works best;
+- a one-line visual description;
+- the internal theme preset and design-language mapping.
 
 Use user-facing scenario labels such as:
 
@@ -173,7 +179,7 @@ Use theme presets as starting points, not as copied CSS. Define a fresh token bl
 
 - Apply `references/taste.md` before theme selection. A preset can suggest palette and mood, but it cannot reintroduce Inter, pure black, centered hero defaults, three equal cards, AI purple-blue gradients, neon glows, fake data, or AI-copy voice.
 - Load `references/themes/presets.md` when the user asks for style options, when the style is ambiguous, or when the card set needs a clear visual direction.
-- Use 2-3 scenario-based theme options before coding when appropriate. Do not list the full preset catalog to the user.
+- Use 3-5 scenario-based theme options before coding when appropriate. Do not list the full preset catalog to the user.
 - Convert the selected scenario direction into a final preset from the catalog, then adapt it with fresh local tokens.
 - Do not copy external theme CSS wholesale. Recreate the needed palette and behavior in the local card style.
 
@@ -231,11 +237,11 @@ Use `references/design-languages.md` to define the card set's visual grammar ind
    - Extract known parameters from the original request and do not repeat them.
    - Apply the Ask User Questions policy: infer low-risk defaults, ask only for true blockers, and adapt to the current agent's interaction mode.
    - Do not read `references/taste.md` at this step; it is loaded later in step 4 (theme/language selection) and step 7 (QA).
-   - Skip the question step when the user asked for direct generation, no questions, quick export, or similarly fast execution.
+   - Skip the question step only when the user explicitly asked for no questions or explicitly approved defaults. Direct generation, quick export, or "帮我做" requests still require one early parameter confirmation when meaningful choices are missing.
 
 2. Conditional deep research and fact outline confirmation.
    - Apply the trigger rules in Research & Fact Confirmation: run a research pass when the input is a topic, URL, brief, question, or "make cards about X" request; skip when the input is already a full article, transcript, structured notes, or finished outline.
-   - When triggered, produce the fact outline (core claim, 3-7 supporting points with concrete data, sources, open questions). For planning/confirmation workflows, present it to the user and wait. For Codex-style direct generation, proceed after research when facts are clear and uncontested, while recording sources and assumptions.
+   - When triggered, produce the fact outline (core claim, 3-7 supporting points with concrete data, sources, open questions). Present it to the user and wait when the facts, framing, or scope may change the card narrative; otherwise record clear and uncontested facts with sources after the initial parameter confirmation.
    - Treat this confirmation as separate from the later visual/concept confirmation in step 6 when the workflow is confirmation-led. In execution-first workflows, turn it into a short progress update instead of a blocking gate unless Stop Conditions apply.
    - Save confirmed sources into `sources.md` in the output folder.
    - Skip entirely when not triggered, or when the user explicitly asked to proceed without research.
@@ -262,10 +268,10 @@ Use `references/design-languages.md` to define the card set's visual grammar ind
    - State which card carries the useful detail when the cover or primary language is intentionally low-density.
    - Make card 1 a precise high-impact cover: it must communicate the topic instantly, create curiosity, and feel worth opening and sharing.
    - Concept confirmation covers only the cover concept, content outline, and visual direction. Do not repeat questions about already-resolved ratio, count, theme, platform, or output constraints.
-   - When the task is high-impact or the style is ambiguous after the question step, offer 2-3 visual directions before coding. Cover distinct options such as brand-aligned/conservative, structured/information-graphic, and bolder/shareable.
+   - When the task is high-impact or the style is ambiguous after the question step, offer 3-5 visual directions before coding. Cover distinct options such as brand-aligned/conservative, structured/information-graphic, social-friendly, magazine/editorial, and bolder/shareable.
    - For each direction, describe the cover concept, overall visual language, and the situation where it works best.
    - Skip concept variations when the user already specified the visual style, explicitly asked to proceed without confirmation, or needs a fast direct export.
-   - Ask the user to confirm before coding only in confirmation-led workflows or when Stop Conditions apply. In Codex-style direct generation, state the concept briefly as a progress update and continue into implementation.
+   - Ask the user to confirm before coding when Stop Conditions apply or when the concept direction may materially change the output. If the user already confirmed parameters and the concept follows those choices, state the concept briefly as a progress update and continue into implementation.
 
 6. Build the card webpages.
    - Create one HTML page per card, named predictably such as `card-01.html`, `card-02.html`.

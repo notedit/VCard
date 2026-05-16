@@ -1,92 +1,45 @@
-# vCard · 社媒卡片 Studio
+# vCard
 
-AI native 的社媒卡片工作台。给主题 → 编辑大纲 → 定制风格 → 生成卡片 → 在工作台里预览、对话编辑、导出。
+装进 coding agent 的社媒卡片 skill。给一篇文章、一段笔记或一个主题，让你的 coding agent 排成一整套高质感社媒卡片。
 
-当前实现包含 web app 与同步 API：HTML 闪卡 / GPT-Image 图片两种模式、5 步真实切换、卡片缩略图侧栏、选中卡片对话编辑、deck/card/generate/chat/export API。
+形态是 **landing page + skills**：
+
+- `skills/` 是产品 —— 两个独立 agent skill：`text-card-generator`（HTML/CSS + Playwright 渲染确定性文字卡）、`image-card-generator`（GPT-image-2 生成图片卡）。
+- `landing/` 是纯静态落地页，讲清两个 skill 是什么、怎么装、怎么触发，部署到 Cloudflare。
+- `legacy/` 是旧的「社媒卡片 Studio」web app + 同步 API，已归档，仅供后续可能复用。
 
 ## 文档入口
 
-- [Design Context](./.impeccable.md) — 当前新版前端设计方向
-- [技术方案](./docs/tech-design.md) — 当前 API、数据库与前端边界
+- [仓库结构与架构](./docs/architecture.md) — 当前结构、命令、部署（单一真相源）
+- [Design Context](./.impeccable.md) — 前端设计方向
 - [CLAUDE.md](./CLAUDE.md) — AI 协作指南与项目约定
+- [遗留技术方案](./legacy/docs/tech-design.md) — 仅描述 `legacy/` 旧实现
 
-## 仓库结构
-
-```text
-apps/api/          Hono on Cloudflare Workers — deck/card/generate/chat/export API
-apps/web/          React + Vite web app
-packages/          shared-types: 前后端共享类型
-docs/              tech-design, fixtures
-sandbox/agent-base/ 历史 spike，仅作参考
-```
-
-## 前置依赖
-
-- Node >= 20（见 `.nvmrc`）
-- npm >= 10
-- Neon Postgres 实例（或自建 Postgres + HTTP proxy）
-
-## 本地启动
-
-安装依赖：
+## 快速开始
 
 ```bash
-npm ci
+npm --prefix landing install
+npm run dev        # 本地预览落地页 http://localhost:5173
+npm run build      # 构建到 landing/dist/
+npm run preview    # 预览构建产物
 ```
 
-API 只需要 `DATABASE_URL`。完整本地预览：
+仓库根脚本 `dev/build/preview/typecheck/deploy` 均委托给 `landing/`。
 
-```bash
-npm run dev:full
-```
+## 使用 skills
 
-`dev:full` 会先把 Worker 必需变量 `DATABASE_URL` 同步到 `apps/api/.dev.vars`，再启动：
-
-- API: `http://localhost:8787`
-- 前端: `http://127.0.0.1:5173`
-
-只跑 web app：
-
-```bash
-npm run dev:studio
-```
-
-分开调试时可以跑：
-
-```bash
-npm run dev:vars
-npm run dev:api
-npm run dev:studio
-```
-
-首次使用或数据库结构变化后先跑迁移：
-
-```bash
-npm run -w @vcard/api db:migrate
-```
-
-## 测试
-
-```bash
-npm run typecheck
-npm test
-npm run build
-```
-
-测试用独立的 Neon test branch（CI 通过 `DATABASE_URL_TEST` secret 注入），会在用例间清表。`apps/api/vitest.config.ts` 关闭了文件并行，避免共享测试库互相 `TRUNCATE`。
-
-## CI
-
-`.github/workflows/ci.yml` 在 PR 与 main push 上跑两个 job：
-
-- **Typecheck** — workspace-wide `tsc --noEmit`，不依赖 secrets
-- **Test (vitest + Neon)** — 跑 `db:migrate` → `vitest run`，依赖 `DATABASE_URL_TEST` secret；fork PR 上自动跳过
+`skills/` 下两个目录可装进任意能读本地 skills 目录的 coding agent（Codex 读 `~/.codex/skills/`，Claude Code 读 `.claude/skills/`，通用 agent 多读 `.agents/skills/`）。完整安装与触发方式见落地页 `#install` 段。
 
 ## 部署
 
-Cloudflare Workers + Neon Postgres。
+landing 用 Cloudflare Workers 静态资产部署：
 
-部署顺序：
+```bash
+npm --prefix landing run deploy   # vite build && wrangler deploy
+```
 
-1. 先 migrate：`npm run -w @vcard/api db:migrate`（指向生产 `DATABASE_URL`）
-2. 再 deploy：`wrangler deploy`（在 `apps/api/`）
+首次需 `wrangler login` 或配置 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`。详见 [docs/architecture.md](./docs/architecture.md)。
+
+## legacy
+
+旧 monorepo 已整体归档到 `legacy/`，可独立运行（`cd legacy && npm install && npm run typecheck`），但不再作为实现依据，也不在 `legacy/` 内开发新功能。

@@ -1,0 +1,42 @@
+name: Deploy landing
+
+# push main 且改动 landing/ 时,构建并部署到 Cloudflare Workers 静态资产。
+# 需在仓库 Settings → Secrets and variables → Actions 配置:
+#   CLOUDFLARE_API_TOKEN    (有 Workers Scripts:Edit 权限的 token)
+#   CLOUDFLARE_ACCOUNT_ID
+# secrets 未配置时本 workflow 会失败但不影响其他流程。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'landing/**'
+      - '.github/workflows/deploy-landing.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-landing
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build + wrangler deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: landing/package-lock.json
+      - run: npm --prefix landing ci
+      - run: npm --prefix landing run build
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: landing
+          command: deploy

@@ -1,0 +1,15 @@
+{
+  "name": "vcard-m1",
+  "private": true,
+  "engines": {
+    "node": ">=20",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "dev": "npm --prefix landing run dev",
+    "build": "npm --prefix landing run build",
+    "preview": "npm --prefix landing run preview",
+    "typecheck": "npm --prefix landing run typecheck",
+    "deploy": "npm --prefix landing run deploy"
+  }
+}

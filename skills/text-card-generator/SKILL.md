@@ -142,6 +142,19 @@ When asking the user to choose a style, do not present only one recommendation p
 - a one-line visual description;
 - the internal theme preset and design-language mapping.
 
+Use a two-layer selection logic so outputs stay appropriate without collapsing into the same few looks:
+
+1. Default recommendation layer:
+   - Offer 3-5 high-fit styles based on content type, platform, audience, and sharing goal.
+   - Keep the recommended set close enough to the user's task that any option can succeed without heavy rework.
+   - Prefer options that differ in visible outcome, not just token names. For example: conservative report, data poster, social notebook, magazine explainer, bold opinion.
+
+2. Variant perturbation layer:
+   - When the user has not strongly specified an exact style, rotate within the compatible family instead of always selecting the top default.
+   - Vary at least two of these dimensions across similar tasks: theme preset, primary design language, modifiers, layout recipes, visual anchors, surface metaphor, or title composition.
+   - Keep perturbations semantically compatible with the content. Do not use random novelty that fights the topic, platform, accessibility, or factual clarity.
+   - Record the final selected combination in the concept plan or `sources.md` / `credits.md` so the variation is inspectable.
+
 Use user-facing scenario labels such as:
 
 - Engineering infographic: map to `engineering-paper`, `product-manual`, or `porcelain-research`.
@@ -258,6 +271,8 @@ Use `references/design-languages.md` to define the card set's visual grammar ind
 4. Pick the theme preset and design language, then build the layout plan.
    - Load `references/taste.md` now and read it as an active checklist; the hard constraints apply to every subsequent design decision in this step.
    - Confirm or revisit the theme preset chosen in step 1 against the taste baseline; if a preset would violate a hard constraint, swap it before continuing.
+   - Apply the two-layer style selection logic: first choose from the high-fit recommendation set, then apply a compatible variant perturbation when the user did not specify an exact style.
+   - The perturbation must affect the visible result, not only metadata. Rotate layout recipes, visual anchors, surface metaphors, and composition moves alongside theme / design-language tokens.
    - Assign one concrete layout recipe per card. For stronger design work, use `references/layouts/card-layouts.md`; for magazine/editorial cards, also use `references/magazine-card-adaptations.md`.
    - Assign a design-language combination when the style is open or the user wants more design variation. Load the individual spec file for the selected primary language from `references/design-languages/<name>.md`.
    - Load `references/fonts.md` and run its font-selection algorithm: from the chosen preset × design-language × content-language, take the per-role candidate pools, apply hard-constraint filtering, then weighted-random pick one font per role for the whole set (seed the randomness with the output slug so a given set is reproducible but different topics vary). Record the selected display/serif/sans/mono families in `sources.md`.

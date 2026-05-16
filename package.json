@@ -17,6 +17,7 @@
     "dev:studio": "VITE_API_BASE=http://localhost:8787 npm run dev --workspace @vcard/web -- --host 127.0.0.1",
     "dev:web": "npm run dev:studio",
     "dev:vars": "node scripts/sync-dev-vars.mjs",
+    "sync:skills": "node scripts/sync-skills-to-vcard-skills.mjs",
     "typecheck": "npm run -ws typecheck",
     "test": "npm run -ws test"
   }

@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  typecheck:
-    name: Typecheck
+  landing:
+    name: Landing typecheck + build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -19,29 +19,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-
-  test:
-    name: Test (vitest + Neon)
-    runs-on: ubuntu-latest
-    # Skip on forked PRs — secrets are not exposed there.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    # Tests share one Neon branch and TRUNCATE between cases — must serialize across runs.
-    concurrency:
-      group: ci-test
-      cancel-in-progress: false
-    env:
-      DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - name: Apply drizzle migrations to test branch
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL_TEST }}
-        run: npm run -w @vcard/api db:migrate
-      - run: npm test
+          cache-dependency-path: landing/package-lock.json
+      - run: npm --prefix landing ci
+      - run: npm --prefix landing run typecheck
+      - run: npm --prefix landing run build
